@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from .vcon_builder import LawfulBasisConfig
+
 _ENV_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
@@ -46,6 +48,22 @@ class WebhookConfig:
 
 
 @dataclass
+class ConserverConfig:
+    """Config for `delivery.mode: conserver` (direct POST to a vcon-server)."""
+
+    url: str = ""
+    token: str = ""
+    token_header: str = "x-conserver-api-token"
+    ingress_lists: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DeliveryConfig:
+    # "webhook" (default, WebhookDelivery) or "conserver" (ConserverDelivery)
+    mode: str = "webhook"
+
+
+@dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8000
@@ -62,7 +80,12 @@ class Config:
     adapter: AdapterConfig = field(default_factory=AdapterConfig)
     source: dict[str, Any] = field(default_factory=dict)
     vcon: dict[str, Any] = field(default_factory=dict)
+    lawful_basis: LawfulBasisConfig = field(
+        default_factory=lambda: LawfulBasisConfig(lawful_basis=None)
+    )
+    delivery: DeliveryConfig = field(default_factory=DeliveryConfig)
     webhook: WebhookConfig = field(default_factory=WebhookConfig)
+    conserver: ConserverConfig = field(default_factory=ConserverConfig)
     storage: dict[str, Any] = field(default_factory=dict)
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -72,20 +95,32 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     raw = yaml.safe_load(Path(path).read_text())
     raw = _substitute(raw)
 
+    vcon_raw = raw.get("vcon", {})
     webhook_raw = raw.get("webhook", {})
     endpoints = [WebhookEndpoint(**e) for e in webhook_raw.get("endpoints", [])]
     retry = webhook_raw.get("retry", {})
+    conserver_raw = raw.get("conserver", {})
 
     return Config(
         adapter=AdapterConfig(**raw.get("adapter", {})),
         source=raw.get("source", {}),
-        vcon=raw.get("vcon", {}),
+        vcon=vcon_raw,
+        # Env vars (LAWFUL_BASIS, LAWFUL_BASIS_*) override the YAML
+        # `vcon.lawful_basis:` block field-by-field; see LawfulBasisConfig.resolve.
+        lawful_basis=LawfulBasisConfig.resolve(yaml_block=vcon_raw.get("lawful_basis")),
+        delivery=DeliveryConfig(**raw.get("delivery", {})),
         webhook=WebhookConfig(
             endpoints=endpoints,
             retry_max_attempts=retry.get("max_attempts", 5),
             retry_initial_backoff_seconds=retry.get("initial_backoff_seconds", 1.0),
             retry_max_backoff_seconds=retry.get("max_backoff_seconds", 60.0),
             dead_letter_path=webhook_raw.get("dead_letter_path", "./dlq"),
+        ),
+        conserver=ConserverConfig(
+            url=conserver_raw.get("url", ""),
+            token=conserver_raw.get("token", ""),
+            token_header=conserver_raw.get("token_header", "x-conserver-api-token"),
+            ingress_lists=list(conserver_raw.get("ingress_lists", [])),
         ),
         storage=raw.get("storage", {}),
         server=ServerConfig(**raw.get("server", {})),
