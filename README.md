@@ -2,7 +2,8 @@
 
 > Adapter that converts **__SOURCE_PLATFORM__** events into [vCon](https://datatracker.ietf.org/doc/draft-ietf-vcon-vcon-core/) (Virtual Conversation) objects and delivers them to a [vCon server](https://github.com/vcon-dev/vcon-server) or other downstream consumer.
 
-**Spec target:** IETF `draft-ietf-vcon-vcon-core-02`, vCon syntax `"0.4.0"`.
+**Spec target:** IETF `draft-ietf-vcon-vcon-core-04`, vCon syntax `"0.4.0"`
+(the syntax string is deprecated in -04 but kept for parser compatibility).
 
 [![Tests](https://github.com/vcon-dev/vcon-__ADAPTER_NAME__-adapter/actions/workflows/test.yml/badge.svg)](https://github.com/vcon-dev/vcon-__ADAPTER_NAME__-adapter/actions/workflows/test.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -27,13 +28,15 @@ Then delete this section.
 ## Features
 
 - Spec-compliant vCons (syntax `0.4.0`, `mediatype`, `base64url`, ISO-8601 UTC timestamps)
-- Pluggable transcription via `TranscriptionProvider` protocol (WTF format in `analysis[]`)
-- HMAC-SHA256 webhook body signing (`X-Hub-Signature-256`)
-- Idempotent delivery (`Idempotency-Key` header = vCon UUID)
-- Exponential-backoff retries with dead-letter queue
-- Optional JWS signing (RS256) of each vCon before delivery
+- `encoding: "json"` bodies are the raw JSON value, not a `json.dumps()` string (draft-ietf-vcon-vcon-core-04 §2.3.2); `json_body()` reads either shape back
+- Lawful-basis attachments (`draft-howe-vcon-lawful-basis`) via `LawfulBasisConfig` + `add_lawful_basis()`
+- Two delivery modes, selected by `delivery.mode`:
+  - `webhook`: HMAC-SHA256 body signing (`X-Hub-Signature-256`), `Idempotency-Key` header, exponential-backoff retries, dead-letter queue
+  - `conserver`: direct `POST {CONSERVER_URL}/vcon` to a vcon-server instance (`x-conserver-api-token` header, `ingress_lists` query params), same retry/backoff/DLQ machinery
 - `/healthz` + Prometheus `/metrics` endpoints
 - Configurable via YAML with `${ENV_VAR}` substitution
+
+**Not implemented in this template** (remove this note once you've decided): a `TranscriptionProvider` protocol and optional JWS (RS256) signing of outgoing vCons were previously advertised here but never built. Add them yourself if your adapter needs them, or drop the mention.
 
 ---
 
@@ -67,8 +70,15 @@ See [`config.example.yaml`](config.example.yaml) for all options.
 
 Required env vars:
 - `__ADAPTER_PACKAGE___API_KEY` — credentials for __SOURCE_PLATFORM__
-- `VCON_WEBHOOK_URL` — where to POST vCons
-- `VCON_WEBHOOK_HMAC_SECRET` — shared secret for body signing
+- `VCON_WEBHOOK_URL` — where to POST vCons (`delivery.mode: webhook`)
+- `VCON_WEBHOOK_HMAC_SECRET` — shared secret for body signing (`delivery.mode: webhook`)
+- `CONSERVER_URL`, `CONSERVER_API_TOKEN` — target vcon-server and its API token (`delivery.mode: conserver`)
+
+Optional lawful-basis env vars (see [USAGE.md](USAGE.md)):
+`LAWFUL_BASIS`, `LAWFUL_BASIS_PURPOSE`, `LAWFUL_BASIS_JURISDICTION`,
+`LAWFUL_BASIS_EXPIRATION`, `LAWFUL_BASIS_PROOF_MECHANISM`,
+`LAWFUL_BASIS_PROOF_DESCRIPTION`. Unset means vCons are built with no
+lawful-basis attachment — never default this in code.
 
 ## Test
 

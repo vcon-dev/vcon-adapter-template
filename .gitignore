@@ -16,3 +16,5 @@ dist/
 build/
 config.yaml
 !config.example.yaml
+.venv-scratch/
+.omc/

@@ -44,11 +44,71 @@ find . -name "*.bak" -delete
 2. Delete the "What this is" section at the top of `README.md`
 3. Edit `config.example.yaml` — add your platform-specific options under `source:`
 4. Implement your platform listener in `src/<package>/cli.py` (search for the `TODO: wire your source-platform listener` comment)
-5. If you don't need transcription, JWS signing, or Prometheus — delete those features and their dependencies from `pyproject.toml`
+5. Call `add_lawful_basis()` for every vCon you build. Load its config once at
+   startup with `LawfulBasisConfig.from_env()` (env vars only) or
+   `LawfulBasisConfig.resolve(yaml_block=config.vcon.get("lawful_basis"), env=...)`
+   (YAML + env, env wins per-field — this is what `config.load_config()`
+   already wires into `Config.lawful_basis`). Then, for each vCon:
+
+   ```python
+   from datetime import datetime, timezone
+   from .vcon_builder import add_lawful_basis
+
+   granted_at = datetime.now(timezone.utc).isoformat()
+   add_lawful_basis(v, config.lawful_basis, granted_at=granted_at, party=0, dialog=0)
+   ```
+
+   If `LAWFUL_BASIS` (or `vcon.lawful_basis.lawful_basis` in YAML) is unset,
+   this logs one warning per process and adds nothing — it does not raise
+   and does not invent a basis. Set an invalid value and it raises
+   `ValueError` at config-load time instead of silently building a bad vCon.
+6. Pick a delivery mode in `config.yaml`: `delivery.mode: webhook` (generic
+   HTTP + HMAC, the `webhook:` section) or `delivery.mode: conserver`
+   (direct `POST {url}/vcon` to a vcon-server instance, the `conserver:`
+   section — token header, `ingress_lists` query params). Both share the
+   same retry/backoff/dead-letter-queue implementation in
+   `webhook_delivery.py`, and both call `finalize_vcon()` on your vCon dict
+   before serializing it — see the next point.
+7. Call `finalize_vcon(v.vcon_dict)` on every finished vCon before you
+   serialize or store it *outside* `WebhookDelivery`/`ConserverDelivery`
+   (those two already call it for you inside `deliver()`). It strips empty
+   `meta`/`metadata` placeholders that vcon-lib 0.9.6 leaves on every
+   `Dialog` added via `add_dialog()` — real objects with real content are
+   left alone; only the empty `{}` vcon-lib defaults are removed. Skipping
+   this on a path that bypasses both delivery classes (e.g. writing
+   straight to local storage) will produce a vCon that fails schema
+   validation.
+8. `encoding: "json"` bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): `body` is
+   the raw JSON value (object/array/number/bool/null), never a
+   `json.dumps()`'d string — `add_lawful_basis()` follows this already. Do
+   the same for any other JSON-encoded attachment or analysis body you
+   write. When *reading* a JSON body back (yours or one from an older -02
+   vCon), use `json_body(attachment)` — it returns the value as-is if it's
+   already a JSON value, or `json.loads()`s it first if it's a legacy
+   string, so you don't need to special-case either shape.
+9. If you don't need Prometheus — delete it and its dependency from `pyproject.toml`.
+   (A `TranscriptionProvider` protocol and JWS signing were previously
+   advertised in the README but never implemented — add them yourself if
+   your adapter needs them, or ignore the now-corrected README note.)
 
 ## Step 4 — Verify spec compliance
 
-The smoke tests in `tests/test_vcon_builder.py` enforce the spec compliance checklist. **Keep them green.**
+Two test modules enforce spec compliance (draft-ietf-vcon-vcon-core-04).
+**Keep them green.**
+
+- `tests/test_vcon_builder.py` — smoke tests for the builder helpers,
+  including `LawfulBasisConfig`, `add_lawful_basis()`, `finalize_vcon()`,
+  and `json_body()`.
+- `tests/test_spec_compliance.py` — validates a sample vCon (built with a
+  lawful-basis attachment) against the vendored official JSON schema at
+  `tests/schema/vcon_json_schema.json` (see `tests/schema/SOURCE.md` for
+  where it came from and how to refresh it), plus the non-negotiables the
+  schema alone doesn't fully enforce (no `mimetype`, attachments carry
+  `purpose`/`start`/`party`/`dialog`, `body` is a string unless
+  `encoding: "json"` — then it must NOT be a string, catching accidental
+  double-encoding — no empty `meta`/`metadata`/`group`/`redacted`). Its
+  `assert_spec_compliant()` function is written to be copied verbatim into
+  another vCon-writing repo's own tests.
 
 ```bash
 uv pip install -e ".[dev]"

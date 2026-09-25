@@ -35,6 +35,9 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.4.0",
     "mypy>=1.0.0",
+    "jsonschema>=4.20.0",
+    "types-PyYAML>=6.0",
+    "types-aiofiles>=23.0",
 ]
 signing = ["cryptography>=42.0.0"]
 
@@ -58,3 +61,8 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[[tool.mypy.overrides]]
+# vcon-lib ships no type information.
+module = ["vcon", "vcon.*"]
+ignore_missing_imports = true

@@ -17,13 +17,33 @@ vcon:
   extensions:
     - sip-signaling
     - lawful_basis
-  # Optional: JWS signing
-  signing:
-    enabled: false
-    private_key_path: ${VCON_SIGNING_KEY_PATH}
-    key_id: ${VCON_SIGNING_KEY_ID}
+  # Optional: JWS signing (RS256) — NOT IMPLEMENTED in this template yet.
+  # Left here as a placeholder for adapters that add it; delete if unused.
+  # signing:
+  #   enabled: false
+  #   private_key_path: ${VCON_SIGNING_KEY_PATH}
+  #   key_id: ${VCON_SIGNING_KEY_ID}
 
-# Webhook delivery
+  # Optional: lawful-basis attachment (draft-howe-vcon-lawful-basis).
+  # LAWFUL_BASIS / LAWFUL_BASIS_* env vars override these fields one-by-one;
+  # see LawfulBasisConfig.resolve() in vcon_builder.py. Leave `lawful_basis`
+  # unset (or delete this block) to build vCons with no lawful-basis
+  # attachment — never invent a basis here.
+  lawful_basis:
+    lawful_basis: ${LAWFUL_BASIS}  # consent|contract|legal_obligation|vital_interests|public_task|legitimate_interests
+    purposes:
+      - recording
+    jurisdiction: ${LAWFUL_BASIS_JURISDICTION}
+    expiration: ${LAWFUL_BASIS_EXPIRATION}
+    proof_mechanism: ${LAWFUL_BASIS_PROOF_MECHANISM}
+    proof_description: ${LAWFUL_BASIS_PROOF_DESCRIPTION}
+
+# Delivery mode: "webhook" (generic HTTP + HMAC) or "conserver" (direct
+# POST to a vcon-server instance). Only the selected section below is used.
+delivery:
+  mode: webhook
+
+# Webhook delivery (delivery.mode: webhook)
 webhook:
   endpoints:
     - url: ${VCON_WEBHOOK_URL}
@@ -34,6 +54,19 @@ webhook:
     initial_backoff_seconds: 1
     max_backoff_seconds: 60
   dead_letter_path: /app/vcons/dlq
+
+# Conserver-direct delivery (delivery.mode: conserver)
+# POSTs to {url}/vcon with header `x-conserver-api-token: ${CONSERVER_API_TOKEN}`
+# and repeated `?ingress_lists=...` query params. Reuses the same
+# retry/backoff/DLQ implementation as webhook delivery (ConserverDelivery's
+# constructor defaults match WebhookConfig's); not yet exposed as separate
+# YAML keys here — pass overrides directly to ConserverDelivery(...) if needed.
+conserver:
+  url: ${CONSERVER_URL}
+  token: ${CONSERVER_API_TOKEN}
+  token_header: x-conserver-api-token
+  ingress_lists:
+    - default
 
 # Local filesystem storage (optional)
 storage:
