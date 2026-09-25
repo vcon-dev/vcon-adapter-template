@@ -1,4 +1,4 @@
-"""Spec-compliant vCon construction (syntax 0.4.0, draft-ietf-vcon-vcon-core-02).
+"""Spec-compliant vCon construction (syntax 0.4.0, draft-ietf-vcon-vcon-core-04).
 
 Adapters should call the helpers in this module rather than constructing vCon
 fields directly. We route everything through the `vcon` library (>= 0.9.4)
@@ -15,11 +15,21 @@ Why a thin wrapper at all (instead of using `Vcon` directly):
 - `subject` has no setter on the class — we write via vcon_dict["subject"].
 - Convenience: `sha512_b64url()` for external-media content_hash formatting.
 
+JSON bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): with `encoding: "json"`,
+`body` is the JSON value itself (object/array/number/bool/null) — NOT a
+`json.dumps()` string. (Only -02 required a string body for JSON content;
+-04's CDDL is `body: any`, and the vendored schema already allowed "any
+type for encoding=json".) `add_lawful_basis()` below follows this. When
+reading a JSON body back, use `json_body()` — it accepts both the -04 raw
+value and a legacy `json.dumps`-string body, for compatibility with vCons
+built under -02 rules (including earlier commits of this template).
+
 Lawful basis (draft-howe-vcon-lawful-basis, extension name "lawful_basis"):
 use `LawfulBasisConfig` + `add_lawful_basis()` below. Do NOT use vcon-lib's
-`Vcon.add_lawful_basis_attachment()` — as of vcon-lib 0.9.6 it writes a
-non-string `body` (a dict), which violates the core spec requirement that
-every attachment `body` be a string.
+`Vcon.add_lawful_basis_attachment()` — as of vcon-lib 0.9.6 its output is
+missing the required `start` field and the `mediatype` the vendored schema
+requires on any attachment with a non-empty body (its `body` itself, a
+dict, is fine under -04).
 """
 
 from __future__ import annotations
@@ -308,7 +318,9 @@ def add_lawful_basis(
             # The vendored core schema (tests/schema/vcon_json_schema.json)
             # requires `mediatype` on any attachment with a non-empty `body`.
             "mediatype": "application/json",
-            "body": json.dumps(body),
+            # -04 §2.3.2: with encoding: "json", body IS the JSON value —
+            # not a json.dumps() string. Do not stringify this.
+            "body": body,
         }
     )
 
@@ -317,3 +329,25 @@ def add_lawful_basis(
         extensions.append("lawful_basis")
 
     return True
+
+
+def json_body(attachment: Mapping[str, Any]) -> Any:
+    """Return an `encoding: "json"` attachment's (or analysis's) `body` as a
+    Python value.
+
+    -04 §2.3.2 says `body` for `encoding: "json"` IS the JSON value, not a
+    string — but a reader may still meet vCons built under -02 rules (or by
+    an emitter that hasn't caught up), where `body` was `json.dumps()`'d.
+    Accept both: if `body` is already a non-string JSON value, return it as
+    is; if it's a `str`, `json.loads()` it first.
+
+    Raises `ValueError` if `attachment["encoding"] != "json"`.
+    """
+    encoding = attachment.get("encoding")
+    if encoding != "json":
+        raise ValueError(f"json_body() requires encoding: 'json', got {encoding!r}")
+
+    body = attachment.get("body")
+    if isinstance(body, str):
+        return json.loads(body)
+    return body

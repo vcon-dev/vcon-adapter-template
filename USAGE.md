@@ -78,26 +78,37 @@ find . -name "*.bak" -delete
    this on a path that bypasses both delivery classes (e.g. writing
    straight to local storage) will produce a vCon that fails schema
    validation.
-8. If you don't need Prometheus — delete it and its dependency from `pyproject.toml`.
+8. `encoding: "json"` bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): `body` is
+   the raw JSON value (object/array/number/bool/null), never a
+   `json.dumps()`'d string — `add_lawful_basis()` follows this already. Do
+   the same for any other JSON-encoded attachment or analysis body you
+   write. When *reading* a JSON body back (yours or one from an older -02
+   vCon), use `json_body(attachment)` — it returns the value as-is if it's
+   already a JSON value, or `json.loads()`s it first if it's a legacy
+   string, so you don't need to special-case either shape.
+9. If you don't need Prometheus — delete it and its dependency from `pyproject.toml`.
    (A `TranscriptionProvider` protocol and JWS signing were previously
    advertised in the README but never implemented — add them yourself if
    your adapter needs them, or ignore the now-corrected README note.)
 
 ## Step 4 — Verify spec compliance
 
-Two test modules enforce spec compliance. **Keep them green.**
+Two test modules enforce spec compliance (draft-ietf-vcon-vcon-core-04).
+**Keep them green.**
 
 - `tests/test_vcon_builder.py` — smoke tests for the builder helpers,
-  including `LawfulBasisConfig` and `add_lawful_basis()`.
+  including `LawfulBasisConfig`, `add_lawful_basis()`, `finalize_vcon()`,
+  and `json_body()`.
 - `tests/test_spec_compliance.py` — validates a sample vCon (built with a
   lawful-basis attachment) against the vendored official JSON schema at
   `tests/schema/vcon_json_schema.json` (see `tests/schema/SOURCE.md` for
   where it came from and how to refresh it), plus the non-negotiables the
   schema alone doesn't fully enforce (no `mimetype`, attachments carry
-  `purpose`/`start`/`party`/`dialog`, every `body` is a string, no empty
-  `meta`/`metadata`/`group`/`redacted`). Its `assert_spec_compliant()`
-  function is written to be copied verbatim into another vCon-writing
-  repo's own tests.
+  `purpose`/`start`/`party`/`dialog`, `body` is a string unless
+  `encoding: "json"` — then it must NOT be a string, catching accidental
+  double-encoding — no empty `meta`/`metadata`/`group`/`redacted`). Its
+  `assert_spec_compliant()` function is written to be copied verbatim into
+  another vCon-writing repo's own tests.
 
 ```bash
 uv pip install -e ".[dev]"

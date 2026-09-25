@@ -18,6 +18,7 @@ from __ADAPTER_PACKAGE__.vcon_builder import (
     add_lawful_basis,
     external_media_url,
     finalize_vcon,
+    json_body,
     new_vcon,
     sha512_b64url,
 )
@@ -272,9 +273,12 @@ def test_add_lawful_basis_set_produces_exact_attachment_shape() -> None:
     assert att["dialog"] == 0
     assert att["encoding"] == "json"
     assert att["mediatype"] == "application/json"
-    assert isinstance(att["body"], str)  # body is always a string
+    # -04 §2.3.2: encoding: "json" -> body is the raw JSON value, not a
+    # json.dumps() string.
+    assert not isinstance(att["body"], str)
+    assert isinstance(att["body"], dict)
 
-    body = json.loads(att["body"])
+    body = att["body"]
     assert body["lawful_basis"] == "consent"
     assert body["expiration"] == "2026-01-02T12:00:00Z"
     assert body["jurisdiction"] == "US-MA"
@@ -299,7 +303,7 @@ def test_add_lawful_basis_omits_optional_keys_when_not_configured() -> None:
     add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z")
 
     att = next(a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis")
-    body = json.loads(att["body"])
+    body = att["body"]
     assert "expiration" not in body
     assert "jurisdiction" not in body
     assert "proof_mechanisms" not in body
@@ -378,3 +382,41 @@ def test_finalize_vcon_leaves_vcon_without_empty_placeholders_unchanged() -> Non
     finalize_vcon(v.vcon_dict)
     after = json.dumps(v.vcon_dict, sort_keys=True)
     assert before == after
+
+
+# --- json_body -------------------------------------------------------------
+
+
+def test_json_body_returns_raw_value_body_unchanged() -> None:
+    """-04-shaped attachment: body is already the JSON value."""
+    att = {"purpose": "tags", "encoding": "json", "body": {"department": "sales"}}
+    assert json_body(att) == {"department": "sales"}
+
+
+def test_json_body_parses_legacy_string_body() -> None:
+    """-02-shaped (or pre-fix) attachment: body was json.dumps()'d."""
+    att = {"purpose": "tags", "encoding": "json", "body": json.dumps({"department": "sales"})}
+    assert json_body(att) == {"department": "sales"}
+
+
+def test_json_body_handles_list_and_scalar_json_values() -> None:
+    assert json_body({"encoding": "json", "body": [1, 2, 3]}) == [1, 2, 3]
+    assert json_body({"encoding": "json", "body": 42}) == 42
+    assert json_body({"encoding": "json", "body": True}) is True
+    assert json_body({"encoding": "json", "body": None}) is None
+
+
+def test_json_body_rejects_non_json_encoding() -> None:
+    att = {"purpose": "tags", "encoding": "none", "body": "plain text"}
+    with pytest.raises(ValueError, match="encoding"):
+        json_body(att)
+
+
+def test_json_body_on_real_add_lawful_basis_attachment_round_trips() -> None:
+    v = new_vcon()
+    cfg = LawfulBasisConfig(lawful_basis="consent", expiration="2026-01-02T12:00:00Z")
+    add_lawful_basis(v, cfg, granted_at="2025-01-02T12:15:30Z")
+    att = next(a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis")
+
+    assert json_body(att) == att["body"]
+    assert json_body(att)["lawful_basis"] == "consent"

@@ -40,9 +40,29 @@ def _walk(node: Any) -> Any:
             yield from _walk(item)
 
 
+def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
+    """draft-ietf-vcon-vcon-core-04 §2.3.2: with `encoding: "json"`, `body`
+    IS the JSON value (object/array/number/bool/null) — never a
+    `json.dumps()` string (a string body there would mean the value got
+    double-encoded). With any other encoding (or none), `body` must be a
+    plain string, same as -02.
+    """
+    if "body" not in obj:
+        return
+    if obj.get("encoding") == "json":
+        assert not isinstance(obj["body"], str), (
+            f"{label} `body` is a string under encoding: 'json' — should be "
+            f"the raw JSON value per draft-ietf-vcon-vcon-core-04 §2.3.2, "
+            f"not a json.dumps() string (looks double-encoded): {obj}"
+        )
+    else:
+        assert isinstance(obj["body"], str), f"{label} `body` is not a string: {obj}"
+
+
 def assert_spec_compliant(vcon_dict: dict[str, Any], schema_path: Path | str) -> None:
-    """Assert `vcon_dict` conforms to the vendored vCon core JSON schema and
-    to the project's non-negotiable field-naming rules.
+    """Assert `vcon_dict` conforms to the vendored vCon core JSON schema
+    (draft-ietf-vcon-vcon-core-04) and to the project's non-negotiable
+    field-naming rules.
 
     Raises `AssertionError` with the collected schema errors (if any), or on
     the first non-negotiable violation.
@@ -58,20 +78,19 @@ def assert_spec_compliant(vcon_dict: dict[str, Any], schema_path: Path | str) ->
     for node in _walk(vcon_dict):
         assert "mimetype" not in node, f"found legacy `mimetype` key in: {node}"
 
-    # Every attachment carries purpose/start/party/dialog, and a string body.
+    # Every attachment carries purpose/start/party/dialog. Body is a string
+    # unless encoding: "json", in which case it's the raw JSON value.
     for att in vcon_dict.get("attachments", []):
         assert "purpose" in att, f"attachment missing `purpose`: {att}"
         assert "type" not in att, f"attachment uses legacy `type` instead of `purpose`: {att}"
         assert "start" in att, f"attachment missing `start`: {att}"
         assert "party" in att, f"attachment missing `party`: {att}"
         assert "dialog" in att, f"attachment missing `dialog`: {att}"
-        if "body" in att:
-            assert isinstance(att["body"], str), f"attachment `body` is not a string: {att}"
+        _assert_body_shape(att, "attachment")
 
-    # Every analysis body is a string too.
+    # Same body rule for analysis.
     for analysis in vcon_dict.get("analysis", []):
-        if "body" in analysis:
-            assert isinstance(analysis["body"], str), f"analysis `body` is not a string: {analysis}"
+        _assert_body_shape(analysis, "analysis")
         assert "schema_version" not in analysis, f"legacy `schema_version` in: {analysis}"
         assert "vendor" in analysis, f"analysis missing required `vendor`: {analysis}"
 
@@ -117,7 +136,9 @@ def sample_vcon_dict() -> dict[str, Any]:
         dialog=0,
         vendor="openai-whisper",
         product="whisper-large-v3",
-        body=json.dumps({"text": "hello there"}),
+        # -04 §2.3.2: encoding: "json" -> body is the raw JSON value, not a
+        # json.dumps() string.
+        body={"text": "hello there"},
         encoding="json",
         schema="https://datatracker.ietf.org/doc/draft-howe-vcon-wtf-extension/",
     )
@@ -180,3 +201,39 @@ def test_non_string_analysis_body_fails_the_check() -> None:
     ]
     with pytest.raises(AssertionError, match="not a string"):
         assert_spec_compliant(bad, SCHEMA_PATH)
+
+
+def test_json_encoded_attachment_with_string_body_fails_the_check() -> None:
+    """encoding: "json" with a `body` that's a `json.dumps()` string is
+    double-encoding under -04 §2.3.2 — `body` should be the raw JSON value.
+    """
+    bad = new_vcon().vcon_dict
+    bad["attachments"] = [
+        {
+            "purpose": "tags",
+            "start": "2026-01-02T12:00:00Z",
+            "party": 0,
+            "dialog": 0,
+            "encoding": "json",
+            "mediatype": "application/json",
+            "body": json.dumps({"department": "sales"}),
+        }
+    ]
+    with pytest.raises(AssertionError, match="double-encoded"):
+        assert_spec_compliant(bad, SCHEMA_PATH)
+
+
+def test_json_encoded_attachment_with_raw_value_body_passes() -> None:
+    ok = new_vcon().vcon_dict
+    ok["attachments"] = [
+        {
+            "purpose": "tags",
+            "start": "2026-01-02T12:00:00Z",
+            "party": 0,
+            "dialog": 0,
+            "encoding": "json",
+            "mediatype": "application/json",
+            "body": {"department": "sales"},
+        }
+    ]
+    assert_spec_compliant(ok, SCHEMA_PATH)
