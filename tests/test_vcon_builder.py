@@ -17,6 +17,7 @@ from __ADAPTER_PACKAGE__.vcon_builder import (
     LawfulBasisConfig,
     add_lawful_basis,
     external_media_url,
+    finalize_vcon,
     new_vcon,
     sha512_b64url,
 )
@@ -312,3 +313,68 @@ def test_add_lawful_basis_does_not_duplicate_extension() -> None:
 
     assert v.vcon_dict["extensions"].count("lawful_basis") == 1
     assert "sip-signaling" in v.vcon_dict["extensions"]
+
+
+# --- finalize_vcon --------------------------------------------------------
+
+
+def test_finalize_vcon_strips_empty_meta_from_real_dialog() -> None:
+    """Reproduces vcon-lib 0.9.6's actual bug: `Dialog.__init__` defaults
+    both `meta` and `metadata` to `{}`, and `Dialog.to_dict()` includes any
+    attribute that isn't `None` — so `add_dialog()` always emits both keys
+    as empty objects unless something strips them.
+    """
+    from vcon.dialog import Dialog
+
+    v = new_vcon()
+    v.add_dialog(
+        Dialog(
+            type="recording",
+            start="2026-01-02T12:00:00Z",
+            parties=[0],
+            mediatype="audio/wav",
+            url="https://example.com/r.wav",
+            content_hash="sha512-abc",
+        )
+    )
+    # Confirm the bug is actually present before asserting the fix removes it.
+    assert v.vcon_dict["dialog"][0].get("meta") == {}
+    assert v.vcon_dict["dialog"][0].get("metadata") == {}
+
+    result = finalize_vcon(v.vcon_dict)
+
+    assert "meta" not in result["dialog"][0]
+    assert "metadata" not in result["dialog"][0]
+    # Real fields survive untouched.
+    assert result["dialog"][0]["mediatype"] == "audio/wav"
+
+
+def test_finalize_vcon_returns_the_same_dict_it_was_given() -> None:
+    v = new_vcon()
+    result = finalize_vcon(v.vcon_dict)
+    assert result is v.vcon_dict
+
+
+def test_finalize_vcon_strips_empty_meta_metadata_anywhere_nested() -> None:
+    vcon_dict = {
+        "vcon": "0.4.0",
+        "parties": [{"name": "a", "meta": {}}],
+        "attachments": [{"purpose": "tags", "metadata": {}, "body": "{}"}],
+        "dialog": [{"type": "text", "meta": {}, "metadata": {"has": "content"}}],
+    }
+
+    result = finalize_vcon(vcon_dict)
+
+    assert "meta" not in result["parties"][0]
+    assert "metadata" not in result["attachments"][0]
+    assert "meta" not in result["dialog"][0]
+    # Non-empty metadata is left alone.
+    assert result["dialog"][0]["metadata"] == {"has": "content"}
+
+
+def test_finalize_vcon_leaves_vcon_without_empty_placeholders_unchanged() -> None:
+    v = new_vcon(subject="no placeholders here")
+    before = json.dumps(v.vcon_dict, sort_keys=True)
+    finalize_vcon(v.vcon_dict)
+    after = json.dumps(v.vcon_dict, sort_keys=True)
+    assert before == after

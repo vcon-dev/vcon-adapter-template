@@ -40,6 +40,25 @@ async def test_dlq_written_when_no_endpoints(tmp_path) -> None:
     assert json.loads(dlq_file.read_text())["uuid"] == "abc-123"
 
 
+@pytest.mark.asyncio
+async def test_deliver_strips_empty_meta_metadata_before_serializing(tmp_path) -> None:
+    """WebhookDelivery.deliver() must call finalize_vcon() on its way out —
+    an adapter shouldn't have to remember to do this itself.
+    """
+    wd = WebhookDelivery(endpoints=[], dead_letter_path=tmp_path)
+    vcon = {
+        "uuid": "meta-1",
+        "vcon": "0.4.0",
+        "dialog": [{"type": "recording", "meta": {}, "metadata": {}}],
+    }
+    ok = await wd.deliver(vcon)
+    assert ok is False  # no endpoints configured; only checking the DLQ body
+
+    dlq_body = json.loads((tmp_path / "meta-1.vcon.json").read_text())
+    assert "meta" not in dlq_body["dialog"][0]
+    assert "metadata" not in dlq_body["dialog"][0]
+
+
 # --- ConserverDelivery ---------------------------------------------------
 
 
@@ -133,3 +152,31 @@ async def test_conserver_delivery_dlq_on_failure(tmp_path) -> None:
     dlq_file = tmp_path / "fail-1.vcon.json"
     assert dlq_file.exists()
     assert json.loads(dlq_file.read_text())["uuid"] == "fail-1"
+
+
+@pytest.mark.asyncio
+async def test_conserver_delivery_strips_empty_meta_metadata(tmp_path) -> None:
+    received: dict = {}
+
+    async def handler(request: web.Request) -> web.Response:
+        received["body"] = await request.json()
+        return web.json_response({"ok": True}, status=201)
+
+    app = web.Application()
+    app.router.add_post("/vcon", handler)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        delivery = ConserverDelivery(base_url=str(server.make_url("")), dead_letter_path=tmp_path)
+        vcon = {
+            "uuid": "meta-2",
+            "vcon": "0.4.0",
+            "dialog": [{"type": "recording", "meta": {}, "metadata": {}}],
+        }
+        ok = await delivery.deliver(vcon)
+    finally:
+        await server.close()
+
+    assert ok is True
+    assert "meta" not in received["body"]["dialog"][0]
+    assert "metadata" not in received["body"]["dialog"][0]

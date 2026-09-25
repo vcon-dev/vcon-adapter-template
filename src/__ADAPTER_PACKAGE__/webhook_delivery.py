@@ -8,6 +8,10 @@ retry/backoff/dead-letter-queue implementation.
   query params. Reuses the same retry/backoff/DLQ logic.
 
 Pick between them via `delivery.mode: webhook|conserver` in config.
+
+Both `deliver()` methods call `vcon_builder.finalize_vcon()` on the
+incoming `vcon_dict` before serializing it, so callers get vcon-lib's
+empty `meta`/`metadata` placeholders stripped for free.
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ from typing import Any
 import aiofiles
 import aiohttp
 import structlog
+
+from .vcon_builder import finalize_vcon
 
 log = structlog.get_logger(__name__)
 
@@ -102,6 +108,7 @@ class WebhookDelivery:
 
     async def deliver(self, vcon_dict: dict[str, Any]) -> bool:
         """Deliver to all endpoints. Returns True if at least one succeeded."""
+        finalize_vcon(vcon_dict)
         body = json.dumps(vcon_dict, separators=(",", ":")).encode("utf-8")
         uuid = vcon_dict["uuid"]
         any_success = False
@@ -182,6 +189,7 @@ class ConserverDelivery:
 
     async def deliver(self, vcon_dict: dict[str, Any]) -> bool:
         """POST to `{base_url}/vcon`. Returns True on success."""
+        finalize_vcon(vcon_dict)
         body = json.dumps(vcon_dict, separators=(",", ":")).encode("utf-8")
         uuid = vcon_dict["uuid"]
 

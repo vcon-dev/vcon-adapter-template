@@ -1,6 +1,7 @@
 """Validate a sample vCon (built via this template's own builder, with a
-lawful-basis attachment) against the vendored official JSON schema, plus the
-non-negotiables the schema alone doesn't fully enforce.
+lawful-basis attachment, finalized via `finalize_vcon()`) against the
+vendored official JSON schema, plus the non-negotiables the schema alone
+doesn't fully enforce.
 
 `assert_spec_compliant()` is written to be copied verbatim into other
 vCon-writing repos' test suites — it only depends on `jsonschema` (stdlib
@@ -18,7 +19,12 @@ import pytest
 from vcon.dialog import Dialog
 from vcon.party import Party
 
-from __ADAPTER_PACKAGE__.vcon_builder import LawfulBasisConfig, add_lawful_basis, new_vcon
+from __ADAPTER_PACKAGE__.vcon_builder import (
+    LawfulBasisConfig,
+    add_lawful_basis,
+    finalize_vcon,
+    new_vcon,
+)
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "vcon_json_schema.json"
 
@@ -94,16 +100,6 @@ def sample_vcon_dict() -> dict[str, Any]:
             content_hash="sha512-4kqcuBz1QLDYS93t2Bq6oGmVQI8-Fmcv5Ldg3f97vw",
         )
     )
-    # vcon-lib 0.9.6's Dialog.to_dict() always emits empty `meta: {}` and
-    # `metadata: {}`, which violates the "no empty meta/metadata" rule.
-    # This is a vcon-lib bug (out of scope for this adapter template's
-    # new_vcon() wrapper, which only touches build_new()'s output) — strip
-    # them here so the sample is compliant, and see the CON-1081 report for
-    # the flag.
-    for dlg in v.vcon_dict["dialog"]:
-        for key in ("meta", "metadata"):
-            if dlg.get(key) == {}:
-                del dlg[key]
 
     cfg = LawfulBasisConfig(
         lawful_basis="consent",
@@ -126,7 +122,13 @@ def sample_vcon_dict() -> dict[str, Any]:
         schema="https://datatracker.ietf.org/doc/draft-howe-vcon-wtf-extension/",
     )
 
-    return v.vcon_dict  # type: ignore[no-any-return]
+    # Same path a real adapter's delivery gets for free: WebhookDelivery and
+    # ConserverDelivery both call finalize_vcon() before serializing. No
+    # test-side stripping here — if finalize_vcon() regresses or is removed,
+    # this fixture (and test_sample_vcon_with_lawful_basis_is_spec_compliant)
+    # fails, because vcon-lib's Dialog.to_dict() leaves empty `meta`/
+    # `metadata` placeholders on the dialog added above.
+    return finalize_vcon(v.vcon_dict)
 
 
 def test_schema_file_present_and_parses() -> None:

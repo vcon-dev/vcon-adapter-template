@@ -67,8 +67,18 @@ find . -name "*.bak" -delete
    (direct `POST {url}/vcon` to a vcon-server instance, the `conserver:`
    section — token header, `ingress_lists` query params). Both share the
    same retry/backoff/dead-letter-queue implementation in
-   `webhook_delivery.py`.
-7. If you don't need Prometheus — delete it and its dependency from `pyproject.toml`.
+   `webhook_delivery.py`, and both call `finalize_vcon()` on your vCon dict
+   before serializing it — see the next point.
+7. Call `finalize_vcon(v.vcon_dict)` on every finished vCon before you
+   serialize or store it *outside* `WebhookDelivery`/`ConserverDelivery`
+   (those two already call it for you inside `deliver()`). It strips empty
+   `meta`/`metadata` placeholders that vcon-lib 0.9.6 leaves on every
+   `Dialog` added via `add_dialog()` — real objects with real content are
+   left alone; only the empty `{}` vcon-lib defaults are removed. Skipping
+   this on a path that bypasses both delivery classes (e.g. writing
+   straight to local storage) will produce a vCon that fails schema
+   validation.
+8. If you don't need Prometheus — delete it and its dependency from `pyproject.toml`.
    (A `TranscriptionProvider` protocol and JWS signing were previously
    advertised in the README but never implemented — add them yourself if
    your adapter needs them, or ignore the now-corrected README note.)

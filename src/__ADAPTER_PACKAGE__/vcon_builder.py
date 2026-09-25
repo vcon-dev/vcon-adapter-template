@@ -104,6 +104,46 @@ def external_media_url(
     }
 
 
+def _walk_dicts(node: Any) -> Any:
+    """Yield every dict found anywhere in a nested JSON-like structure
+    (the dicts themselves, so callers can mutate them in place).
+    """
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk_dicts(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_dicts(item)
+
+
+def finalize_vcon(vcon_dict: dict[str, Any]) -> dict[str, Any]:
+    """Strip vcon-lib's empty `meta`/`metadata` placeholders from every
+    object in `vcon_dict` (parties, dialog, and anywhere else the library
+    defaults them to `{}` instead of omitting the key), in place, and
+    return it.
+
+    vcon-lib 0.9.6's `Dialog.__init__` always sets both `self.meta` and
+    `self.metadata` to `{}` when neither is passed to `add_dialog()`, and
+    its `to_dict()` (like `Party.to_dict()`) only omits attributes that are
+    `None` — so every dialog added via `add_dialog()` serializes with two
+    empty-object fields, which the core spec disallows ("no empty
+    meta/metadata/group/redacted"). `new_vcon()` cannot fix this: the bug
+    is per-dialog, not in `build_new()`'s own output.
+
+    Call this once on the finished vCon dict before serializing or
+    delivering it. `WebhookDelivery.deliver()` and `ConserverDelivery.deliver()`
+    both call it for you, so an adapter following the documented delivery
+    path gets this for free; call it directly if you serialize a vCon
+    outside those two paths (e.g. writing straight to local storage).
+    """
+    for node in _walk_dicts(vcon_dict):
+        for key in ("meta", "metadata"):
+            if node.get(key) == {}:
+                del node[key]
+    return vcon_dict
+
+
 @dataclass(frozen=True)
 class LawfulBasisConfig:
     """Configuration for the `lawful_basis` vCon extension.
