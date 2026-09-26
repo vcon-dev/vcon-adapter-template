@@ -323,10 +323,10 @@ def test_add_lawful_basis_does_not_duplicate_extension() -> None:
 
 
 def test_finalize_vcon_strips_empty_meta_from_real_dialog() -> None:
-    """Reproduces vcon-lib 0.9.6's actual bug: `Dialog.__init__` defaults
-    both `meta` and `metadata` to `{}`, and `Dialog.to_dict()` includes any
-    attribute that isn't `None` — so `add_dialog()` always emits both keys
-    as empty objects unless something strips them.
+    """vcon-lib before 0.10.0 emitted empty `meta` and `metadata` on every
+    dialog built through `add_dialog()`. 0.10.0 omits them, but
+    `finalize_vcon()` still strips them for vCons built elsewhere, so the
+    empty keys are injected here to keep testing the strip.
     """
     from vcon.dialog import Dialog
 
@@ -341,9 +341,8 @@ def test_finalize_vcon_strips_empty_meta_from_real_dialog() -> None:
             content_hash="sha512-abc",
         )
     )
-    # Confirm the bug is actually present before asserting the fix removes it.
-    assert v.vcon_dict["dialog"][0].get("meta") == {}
-    assert v.vcon_dict["dialog"][0].get("metadata") == {}
+    v.vcon_dict["dialog"][0]["meta"] = {}
+    v.vcon_dict["dialog"][0]["metadata"] = {}
 
     result = finalize_vcon(v.vcon_dict)
 
