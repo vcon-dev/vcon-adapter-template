@@ -204,7 +204,7 @@ def test_non_string_analysis_body_fails_the_check() -> None:
             "body": {"not": "a string"},
         }
     ]
-    with pytest.raises(AssertionError, match="not a string|not of type .string."):
+    with pytest.raises(AssertionError, match=r"not a string|not of type .string."):
         assert_spec_compliant(bad, SCHEMA_PATH)
 
 
