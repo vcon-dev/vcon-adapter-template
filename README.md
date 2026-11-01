@@ -28,7 +28,8 @@ Then delete this section.
 
 - Spec-compliant vCons (syntax `0.5.0`, `mediatype`, `base64url`, ISO-8601 UTC timestamps)
 - `encoding: "json"` bodies are the raw JSON value, not a `json.dumps()` string (draft-ietf-vcon-vcon-core-05, Attachment Content / Analysis Content); `json_body()` reads either shape back
-- Lawful-basis attachments (`draft-howe-vcon-lawful-basis`) via `LawfulBasisConfig` + `add_lawful_basis()`
+- One Session per conversation: receivers on the Session, contributors on the Dialog, joins/leaves/transfers as Events (no `party_history`); see `describe_session()` in `vcon_builder.py`
+- Lawful-basis attachments (`draft-howe-vcon-lawful-basis`) via `LawfulBasisConfig` + `add_lawful_basis()` (scoped with `party` plus `session`)
 - Two delivery modes, selected by `delivery.mode`:
   - `webhook`: HMAC-SHA256 body signing (`X-Hub-Signature-256`), `Idempotency-Key` header, exponential-backoff retries, dead-letter queue
   - `conserver`: direct `POST {CONSERVER_URL}/vcon` to a vcon-server instance (`x-conserver-api-token` header, `ingress_lists` query params), same retry/backoff/DLQ machinery

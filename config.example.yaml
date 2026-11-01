@@ -12,7 +12,7 @@ source:
 
 # vCon construction
 vcon:
-  syntax: "0.4.0"
+  syntax: "0.5.0"
   # Optional: list extensions this adapter emits
   extensions:
     - sip-signaling
