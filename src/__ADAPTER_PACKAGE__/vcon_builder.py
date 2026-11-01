@@ -1,4 +1,4 @@
-"""Spec-compliant vCon construction (syntax 0.4.0, draft-ietf-vcon-vcon-core-04).
+"""Spec-compliant vCon construction (syntax 0.5.0, draft-ietf-vcon-vcon-core-05).
 
 Adapters should call the helpers in this module rather than constructing vCon
 fields directly. We route everything through the `vcon` library (>= 0.9.4)
@@ -15,7 +15,7 @@ Why a thin wrapper at all (instead of using `Vcon` directly):
 - `subject` has no setter on the class — we write via vcon_dict["subject"].
 - Convenience: `sha512_b64url()` for external-media content_hash formatting.
 
-JSON bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): with `encoding: "json"`,
+JSON bodies (draft-ietf-vcon-vcon-core-05 (Attachment Content / Analysis Content)): with `encoding: "json"`,
 `body` is the JSON value itself (object/array/number/bool/null) — NOT a
 `json.dumps()` string. (Only -02 required a string body for JSON content;
 -04's CDDL is `body: any`, and the vendored schema already allowed "any
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-VCON_SYNTAX = "0.4.0"
+VCON_SYNTAX = "0.5.0"
 
 # The six GDPR lawful bases, per draft-howe-vcon-lawful-basis.
 VALID_LAWFUL_BASES = frozenset(
@@ -318,7 +318,7 @@ def add_lawful_basis(
             # The vendored core schema (tests/schema/vcon_json_schema.json)
             # requires `mediatype` on any attachment with a non-empty `body`.
             "mediatype": "application/json",
-            # -04 §2.3.2: with encoding: "json", body IS the JSON value —
+            # core-05 (Attachment Content / Analysis Content): with encoding: "json", body IS the JSON value —
             # not a json.dumps() string. Do not stringify this.
             "body": body,
         }
@@ -335,7 +335,7 @@ def json_body(attachment: Mapping[str, Any]) -> Any:
     """Return an `encoding: "json"` attachment's (or analysis's) `body` as a
     Python value.
 
-    -04 §2.3.2 says `body` for `encoding: "json"` IS the JSON value, not a
+    core-05 (Attachment Content / Analysis Content) says `body` for `encoding: "json"` IS the JSON value, not a
     string — but a reader may still meet vCons built under -02 rules (or by
     an emitter that hasn't caught up), where `body` was `json.dumps()`'d.
     Accept both: if `body` is already a non-string JSON value, return it as

@@ -78,7 +78,7 @@ find . -name "*.bak" -delete
    this on a path that bypasses both delivery classes (e.g. writing
    straight to local storage) will produce a vCon that fails schema
    validation.
-8. `encoding: "json"` bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): `body` is
+8. `encoding: "json"` bodies (draft-ietf-vcon-vcon-core-05, Attachment Content / Analysis Content): `body` is
    the raw JSON value (object/array/number/bool/null), never a
    `json.dumps()`'d string — `add_lawful_basis()` follows this already. Do
    the same for any other JSON-encoded attachment or analysis body you
@@ -93,7 +93,7 @@ find . -name "*.bak" -delete
 
 ## Step 4 — Verify spec compliance
 
-Two test modules enforce spec compliance (draft-ietf-vcon-vcon-core-04).
+Three test modules enforce spec compliance (draft-ietf-vcon-vcon-core-05).
 **Keep them green.**
 
 - `tests/test_vcon_builder.py` — smoke tests for the builder helpers,
@@ -109,6 +109,9 @@ Two test modules enforce spec compliance (draft-ietf-vcon-vcon-core-04).
   double-encoding — no empty `meta`/`metadata`/`group`/`redacted`). Its
   `assert_spec_compliant()` function is written to be copied verbatim into
   another vCon-writing repo's own tests.
+- `tests/test_core05_examples.py` — validates the core-05 Appendix B examples
+  (`tests/schema/examples/`) against the same schema. The CDDL (Appendix D)
+  is vendored alongside as `tests/schema/vcon.cddl`.
 
 ```bash
 uv pip install -e ".[dev]"

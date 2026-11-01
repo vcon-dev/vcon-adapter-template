@@ -26,8 +26,8 @@ from __ADAPTER_PACKAGE__.vcon_builder import (
 
 def test_syntax_is_0_4_0() -> None:
     v = new_vcon()
-    assert v.vcon_dict["vcon"] == "0.4.0"
-    assert VCON_SYNTAX == "0.4.0"
+    assert v.vcon_dict["vcon"] == "0.5.0"
+    assert VCON_SYNTAX == "0.5.0"
 
 
 def test_build_new_strips_group_and_redacted() -> None:

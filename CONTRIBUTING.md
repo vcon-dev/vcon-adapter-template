@@ -7,7 +7,7 @@
 **Always use the `vcon` library helpers** (`Vcon.add_party`, `add_dialog`, `add_attachment`, `add_analysis`, `add_tag`) rather than writing to `vcon_dict[...]` directly. The lib (>= 0.9.4) is spec-correct out of the box.
 
 ### Top-level vCon
-- [ ] `vcon` syntax param is exactly `"0.4.0"` (NOT `0.0.1`, NOT `0.0.2`)
+- [ ] `vcon` syntax param is exactly `"0.5.0"` (NOT `0.0.1`, NOT `0.0.2`)
 - [ ] `uuid` is a v4 UUID string
 - [ ] All timestamps are ISO-8601 with timezone (`Z` or explicit offset)
 - [ ] No `group: []` or `redacted: {}` left over from `Vcon.build_new()`

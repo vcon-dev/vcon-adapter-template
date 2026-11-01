@@ -41,7 +41,7 @@ def _walk(node: Any) -> Any:
 
 
 def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
-    """draft-ietf-vcon-vcon-core-04 §2.3.2: with `encoding: "json"`, `body`
+    """draft-ietf-vcon-vcon-core-05 (Attachment Content / Analysis Content): with `encoding: "json"`, `body`
     IS the JSON value (object/array/number/bool/null) — never a
     `json.dumps()` string (a string body there would mean the value got
     double-encoded). With any other encoding (or none), `body` must be a
@@ -52,7 +52,7 @@ def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
     if obj.get("encoding") == "json":
         assert not isinstance(obj["body"], str), (
             f"{label} `body` is a string under encoding: 'json' — should be "
-            f"the raw JSON value per draft-ietf-vcon-vcon-core-04 §2.3.2, "
+            f"the raw JSON value per draft-ietf-vcon-vcon-core-05 (Attachment Content / Analysis Content), "
             f"not a json.dumps() string (looks double-encoded): {obj}"
         )
     else:
@@ -61,7 +61,7 @@ def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
 
 def assert_spec_compliant(vcon_dict: dict[str, Any], schema_path: Path | str) -> None:
     """Assert `vcon_dict` conforms to the vendored vCon core JSON schema
-    (draft-ietf-vcon-vcon-core-04) and to the project's non-negotiable
+    (draft-ietf-vcon-vcon-core-05) and to the project's non-negotiable
     field-naming rules.
 
     Raises `AssertionError` with the collected schema errors (if any), or on
@@ -136,7 +136,7 @@ def sample_vcon_dict() -> dict[str, Any]:
         dialog=0,
         vendor="openai-whisper",
         product="whisper-large-v3",
-        # -04 §2.3.2: encoding: "json" -> body is the raw JSON value, not a
+        # core-05 (Attachment Content / Analysis Content): encoding: "json" -> body is the raw JSON value, not a
         # json.dumps() string.
         body={"text": "hello there"},
         encoding="json",
@@ -205,7 +205,7 @@ def test_non_string_analysis_body_fails_the_check() -> None:
 
 def test_json_encoded_attachment_with_string_body_fails_the_check() -> None:
     """encoding: "json" with a `body` that's a `json.dumps()` string is
-    double-encoding under -04 §2.3.2 — `body` should be the raw JSON value.
+    double-encoding under core-05 (Attachment Content / Analysis Content) — `body` should be the raw JSON value.
     """
     bad = new_vcon().vcon_dict
     bad["attachments"] = [
