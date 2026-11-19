@@ -1,7 +1,7 @@
 """Spec-compliant vCon construction (syntax 0.5.0, draft-ietf-vcon-vcon-core-05).
 
 Adapters should call the helpers in this module rather than constructing vCon
-fields directly. We route everything through the `vcon` library (>= 1.0.0,
+fields directly. We route everything through the `vcon` library (>= 1.0.3,
 < 2), which is spec-correct for core-05 out of the box for `add_party`,
 `add_session`, `add_dialog`, `add_event`, `add_attachment` (with
 `encoding="json"` + `party` plus `dialog` or `session`), `add_analysis`
@@ -34,19 +34,21 @@ Why a thin wrapper at all (instead of using `Vcon` directly):
 - `subject` has no setter on the class — we write via vcon_dict["subject"].
 - Convenience: `sha512_b64url()` for external-media content_hash formatting.
 
-JSON bodies (draft-ietf-vcon-vcon-core-05 (Attachment Content / Analysis Content)): with `encoding: "json"`,
-`body` is the JSON value itself (object/array/number/bool/null) — NOT a
-`json.dumps()` string. (Only -02 required a string body for JSON content;
--04's CDDL is `body: any`, and the vendored schema already allowed "any
-type for encoding=json".) `add_lawful_basis()` below follows this. When
-reading a JSON body back, use `json_body()` — it accepts both the -04 raw
-value and a legacy `json.dumps`-string body, for compatibility with vCons
-built under -02 rules (including earlier commits of this template).
+JSON bodies (draft-ietf-vcon-vcon-core-05, Attachment Content / Analysis
+Content): with `encoding: "json"`, `body` is the JSON value itself
+(object/array/number/bool/null) — NOT a `json.dumps()` string. (Only -02
+required a string body for JSON content; -04's CDDL is `body: any`, and the
+vendored schema already allowed "any type for encoding=json".)
+`add_lawful_basis()` below follows this. When reading a JSON body back, use
+`json_body()` — it accepts both the -04 raw value and a legacy
+`json.dumps`-string body, for compatibility with vCons built under -02 rules
+(including earlier commits of this template).
 
 Lawful basis (draft-howe-vcon-lawful-basis, extension name "lawful_basis"):
 use `LawfulBasisConfig` + `add_lawful_basis()` below. Prefer this
-helper over vcon-lib's `Vcon.add_lawful_basis_attachment()`: it fixes the
-scope to `party` plus `session`, sets `start` and `mediatype`, and never
+helper over vcon-lib's `Vcon.add_lawful_basis_attachment()`: it builds the
+body from adapter config, scopes it with `party` plus `session`, uses
+`granted_at` as `start` (vcon-lib uses the vCon's `created_at`), and never
 invents a basis.
 """
 
@@ -235,8 +237,10 @@ class LawfulBasisConfig:
     purposes: tuple[str, ...] = ("recording",)
     jurisdiction: str | None = None
     expiration: str | None = None  # ISO 8601
-    proof_mechanism: str | None = None  # mechanism_type, e.g. "external_system"
-    proof_description: str | None = None
+    # proof_type: verbal_confirmation, signed_document, cryptographic_signature
+    # or external_system
+    proof_mechanism: str | None = None
+    proof_description: str | None = None  # written to proof_data.description
 
     def __post_init__(self) -> None:
         if self.lawful_basis is not None and self.lawful_basis not in VALID_LAWFUL_BASES:
@@ -362,19 +366,22 @@ def add_lawful_basis(
             _warned_no_lawful_basis = True
         return False
 
-    body: dict[str, Any] = {"lawful_basis": cfg.lawful_basis}
-    if cfg.expiration is not None:
-        body["expiration"] = cfg.expiration
+    # `expiration` is required by the draft; null means indefinite.
+    body: dict[str, Any] = {"lawful_basis": cfg.lawful_basis, "expiration": cfg.expiration}
     body["purpose_grants"] = [
         {"purpose": purpose, "granted": True, "granted_at": granted_at} for purpose in cfg.purposes
     ]
     if cfg.jurisdiction is not None:
         body["jurisdiction"] = cfg.jurisdiction
     if cfg.proof_mechanism is not None:
-        proof_mechanism: dict[str, Any] = {"mechanism_type": cfg.proof_mechanism}
+        # Proof mechanism object (draft section 5.2.4): proof_type, timestamp,
+        # proof_data are all required.
+        proof_data: dict[str, Any] = {}
         if cfg.proof_description is not None:
-            proof_mechanism["description"] = cfg.proof_description
-        body["proof_mechanisms"] = [proof_mechanism]
+            proof_data["description"] = cfg.proof_description
+        body["proof_mechanisms"] = [
+            {"proof_type": cfg.proof_mechanism, "timestamp": granted_at, "proof_data": proof_data}
+        ]
 
     if session is None:
         sessions = vcon.vcon_dict.get("sessions") or []
@@ -395,8 +402,9 @@ def add_lawful_basis(
             # The vendored core schema (tests/schema/vcon_json_schema.json)
             # requires `mediatype` on any attachment with a non-empty `body`.
             "mediatype": "application/json",
-            # core-05 (Attachment Content / Analysis Content): with encoding: "json", body IS the JSON value —
-            # not a json.dumps() string. Do not stringify this.
+            # core-05 (Attachment Content / Analysis Content): with
+            # encoding: "json", body IS the JSON value, not a json.dumps()
+            # string. Do not stringify this.
             "body": body,
         }
     )
@@ -412,9 +420,10 @@ def json_body(attachment: Mapping[str, Any]) -> Any:
     """Return an `encoding: "json"` attachment's (or analysis's) `body` as a
     Python value.
 
-    core-05 (Attachment Content / Analysis Content) says `body` for `encoding: "json"` IS the JSON value, not a
-    string — but a reader may still meet vCons built under -02 rules (or by
-    an emitter that hasn't caught up), where `body` was `json.dumps()`'d.
+    core-05 (Attachment Content / Analysis Content) says `body` for
+    `encoding: "json"` IS the JSON value, not a string — but a reader may
+    still meet vCons built under -02 rules (or by an emitter that hasn't
+    caught up), where `body` was `json.dumps()`'d.
     Accept both: if `body` is already a non-string JSON value, return it as
     is; if it's a `str`, `json.loads()` it first.
 

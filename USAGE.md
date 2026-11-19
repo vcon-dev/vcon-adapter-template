@@ -140,8 +140,8 @@ from vcon.party import Party
 from .vcon_builder import describe_session, new_vcon
 
 v = new_vcon(subject="Support call")
-v.add_party(Party(name="Caller", tel="+15555550100"))   # party 0
-v.add_party(Party(name="Agent", tel="+15555550101"))    # party 1
+v.add_party(Party(name="Caller", tel="+15555550100"))  # party 0
+v.add_party(Party(name="Agent", tel="+15555550101"))  # party 1
 
 # Receivers (the endpoints) live on the Session. First receiver is the
 # implied originator; pass originator= only when it is someone else.
@@ -149,14 +149,22 @@ describe_session(v, start="2026-01-02T12:00:00Z", duration=60, receivers=[0, 1])
 
 # Contributors (who spoke or wrote) live on the Dialog. session=0 lists the
 # Dialog index on the Session.
-v.add_dialog(Dialog(type="text", start="2026-01-02T12:00:05Z", parties=[0], body="Hello"), session=0)
+v.add_dialog(
+    Dialog(type="text", start="2026-01-02T12:00:05Z", parties=[0], body="Hello"), session=0
+)
 
 # Joins, leaves, mutes and transfers are Events, not party_history.
 v.add_event(Event(type="join", time="2026-01-02T12:00:00Z", sessions=0, party=1))
 
 # Attachments need party plus dialog or session.
-v.add_attachment(purpose="call_metadata", body={"queue": "support"}, encoding="json",
-                 mediatype="application/json", party=0, session=0)
+v.add_attachment(
+    purpose="call_metadata",
+    body={"queue": "support"},
+    encoding="json",
+    mediatype="application/json",
+    party=0,
+    session=0,
+)
 ```
 
 A second related conversation (a transfer target, a callback) is another

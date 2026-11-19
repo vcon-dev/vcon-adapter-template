@@ -4,7 +4,7 @@
 
 **Every PR that touches vCon construction MUST tick these boxes.** Based on [vcon-speckit](https://github.com/vcon-dev/vcon-speckit) non-negotiables.
 
-**Always use the `vcon` library helpers** (`Vcon.add_party`, `add_session`, `add_dialog`, `add_event`, `add_attachment`, `add_analysis`, `add_tag`) rather than writing to `vcon_dict[...]` directly. The lib (`vcon>=1.0.0,<2`) is spec-correct for core-05 out of the box.
+**Always use the `vcon` library helpers** (`Vcon.add_party`, `add_session`, `add_dialog`, `add_event`, `add_attachment`, `add_analysis`, `add_tag`) rather than writing to `vcon_dict[...]` directly. The lib (`vcon>=1.0.3,<2`) is spec-correct for core-05 out of the box.
 
 ### Top-level vCon
 - [ ] `vcon` syntax param is exactly `"0.5.0"` (NOT `0.0.1`, NOT `0.0.2`)

@@ -258,7 +258,7 @@ def test_add_lawful_basis_set_produces_exact_attachment_shape() -> None:
         purposes=("recording", "transcription"),
         jurisdiction="US-MA",
         expiration="2026-01-02T12:00:00Z",
-        proof_mechanism="audio_recording",
+        proof_mechanism="verbal_confirmation",
         proof_description="Verbal consent captured at start of recording",
     )
 
@@ -292,8 +292,9 @@ def test_add_lawful_basis_set_produces_exact_attachment_shape() -> None:
     ]
     assert body["proof_mechanisms"] == [
         {
-            "mechanism_type": "audio_recording",
-            "description": "Verbal consent captured at start of recording",
+            "proof_type": "verbal_confirmation",
+            "timestamp": "2025-01-02T12:15:30Z",
+            "proof_data": {"description": "Verbal consent captured at start of recording"},
         }
     ]
 
@@ -308,9 +309,35 @@ def test_add_lawful_basis_omits_optional_keys_when_not_configured() -> None:
 
     att = next(a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis")
     body = att["body"]
-    assert "expiration" not in body
+    assert body["expiration"] is None  # required; null means indefinite
     assert "jurisdiction" not in body
     assert "proof_mechanisms" not in body
+
+
+@pytest.mark.parametrize(
+    ("expiration", "proof_mechanism"),
+    [(None, None), ("2099-01-01T00:00:00Z", "external_system")],
+)
+def test_add_lawful_basis_body_passes_vcon_lib_lawful_basis_validator(
+    expiration: str | None, proof_mechanism: str | None
+) -> None:
+    """vcon-lib's lawful_basis validator is the reference for the body shape:
+    `expiration` is always present and proof mechanisms carry proof_type,
+    timestamp and proof_data."""
+    from vcon.extensions.lawful_basis.validation import LawfulBasisValidator
+
+    v = new_vcon()
+    cfg = LawfulBasisConfig(
+        lawful_basis="consent",
+        expiration=expiration,
+        proof_mechanism=proof_mechanism,
+        proof_description="consent captured via IVR",
+    )
+    add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z")
+
+    att = next(a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis")
+    result = LawfulBasisValidator().validate_attachment(att)
+    assert result.is_valid, result.errors
 
 
 def test_add_lawful_basis_does_not_duplicate_extension() -> None:
