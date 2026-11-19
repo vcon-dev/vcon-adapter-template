@@ -4,14 +4,21 @@
 
 **Every PR that touches vCon construction MUST tick these boxes.** Based on [vcon-speckit](https://github.com/vcon-dev/vcon-speckit) non-negotiables.
 
-**Always use the `vcon` library helpers** (`Vcon.add_party`, `add_dialog`, `add_attachment`, `add_analysis`, `add_tag`) rather than writing to `vcon_dict[...]` directly. The lib (>= 0.9.4) is spec-correct out of the box.
+**Always use the `vcon` library helpers** (`Vcon.add_party`, `add_session`, `add_dialog`, `add_event`, `add_attachment`, `add_analysis`, `add_tag`) rather than writing to `vcon_dict[...]` directly. The lib (`vcon>=1.0.3,<2`) is spec-correct for core-05 out of the box.
 
 ### Top-level vCon
-- [ ] `vcon` syntax param is exactly `"0.4.0"` (NOT `0.0.1`, NOT `0.0.2`)
+- [ ] `vcon` syntax param is exactly `"0.5.0"` (NOT `0.0.1`, NOT `0.0.2`)
 - [ ] `uuid` is a v4 UUID string
 - [ ] All timestamps are ISO-8601 with timezone (`Z` or explicit offset)
 - [ ] No `group: []` or `redacted: {}` left over from `Vcon.build_new()`
 - [ ] `subject` written via `v.vcon_dict["subject"]` (no setter exists on the lib)
+
+### Sessions, dialogs and events (core-05)
+- [ ] One Session per conversation (`new_vcon()` makes Session 0; `describe_session()` fills it in); at least one Session whenever `dialog` or `events` is non-empty
+- [ ] Receivers on the Session (`parties`, first is the implied originator; `originator` only when different); contributors on the Dialog (`parties`)
+- [ ] `Vcon.add_dialog(dialog, session=<index>)` so the Session lists its Dialogs
+- [ ] No `party_history`, no Dialog `originator`, no transfer Dialogs; joins, leaves and transfers are Events via `Vcon.add_event`
+- [ ] Dialog types written: `recording`, `text`, `incomplete` only (not `audio`/`video`)
 
 ### Analysis objects
 - [ ] Use `Vcon.add_analysis(type, dialog, vendor, body, encoding, schema, product, ...)` — the lib produces spec-correct output and enforces `vendor` as a required kwarg
@@ -21,13 +28,14 @@
 - [ ] Transcript analysis has `schema=<WTF draft URL>`, `encoding="json"`, `vendor="<provider>"`, `product="<model>"`
 
 ### Attachment objects
-- [ ] Use `Vcon.add_attachment(purpose, body, encoding, party, dialog, ...)` — the lib produces spec-correct output as of v0.9.2
+- [ ] Use `Vcon.add_attachment(purpose, body, encoding, party, dialog=..., session=..., ...)`
 - [ ] Field name is `purpose`, NEVER `type` (the lib's keyword arg is already `purpose`, so this happens automatically)
-- [ ] Always pass `party` and `dialog` (use `0, 0` for vCon-level attachments)
-- [ ] For JSON-bodied attachments: `encoding="json"` with a JSON-string `body` — the lib validates it parses
+- [ ] Always pass `party` plus `dialog` or `session`. The lib defaults the scope to the only Session when there is exactly one; with several Sessions pass it explicitly. Never widen a dialog index to a Session
+- [ ] Lawful basis: `add_lawful_basis()` scopes with `party` plus `session`
+- [ ] For JSON-bodied attachments: `encoding="json"` with the raw JSON value as `body` (not a `json.dumps()` string) and `mediatype="application/json"`
 
 ### Tags attachment
-- [ ] Use `Vcon.add_tag(name, value)` directly. The lib (>=0.9.3) writes `party`/`dialog` correctly.
+- [ ] Use `Vcon.add_tag(name, value)` directly. The lib scopes the tags attachment to every Session (adding an empty one if none exists).
 
 ### External media
 - [ ] `url` AND `content_hash` both present

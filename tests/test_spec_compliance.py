@@ -22,6 +22,7 @@ from vcon.party import Party
 from __ADAPTER_PACKAGE__.vcon_builder import (
     LawfulBasisConfig,
     add_lawful_basis,
+    describe_session,
     finalize_vcon,
     new_vcon,
 )
@@ -41,8 +42,8 @@ def _walk(node: Any) -> Any:
 
 
 def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
-    """draft-ietf-vcon-vcon-core-04 §2.3.2: with `encoding: "json"`, `body`
-    IS the JSON value (object/array/number/bool/null) — never a
+    """draft-ietf-vcon-vcon-core-05 (Attachment Content / Analysis Content):
+    with `encoding: "json"`, `body` IS the JSON value (object/array/number/bool/null) — never a
     `json.dumps()` string (a string body there would mean the value got
     double-encoded). With any other encoding (or none), `body` must be a
     plain string, same as -02.
@@ -52,7 +53,8 @@ def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
     if obj.get("encoding") == "json":
         assert not isinstance(obj["body"], str), (
             f"{label} `body` is a string under encoding: 'json' — should be "
-            f"the raw JSON value per draft-ietf-vcon-vcon-core-04 §2.3.2, "
+            f"the raw JSON value per draft-ietf-vcon-vcon-core-05 "
+            f"(Attachment Content / Analysis Content), "
             f"not a json.dumps() string (looks double-encoded): {obj}"
         )
     else:
@@ -61,7 +63,7 @@ def _assert_body_shape(obj: dict[str, Any], label: str) -> None:
 
 def assert_spec_compliant(vcon_dict: dict[str, Any], schema_path: Path | str) -> None:
     """Assert `vcon_dict` conforms to the vendored vCon core JSON schema
-    (draft-ietf-vcon-vcon-core-04) and to the project's non-negotiable
+    (draft-ietf-vcon-vcon-core-05) and to the project's non-negotiable
     field-naming rules.
 
     Raises `AssertionError` with the collected schema errors (if any), or on
@@ -78,14 +80,14 @@ def assert_spec_compliant(vcon_dict: dict[str, Any], schema_path: Path | str) ->
     for node in _walk(vcon_dict):
         assert "mimetype" not in node, f"found legacy `mimetype` key in: {node}"
 
-    # Every attachment carries purpose/start/party/dialog. Body is a string
+    # Every attachment carries purpose/start/party plus dialog or session. Body is a string
     # unless encoding: "json", in which case it's the raw JSON value.
     for att in vcon_dict.get("attachments", []):
         assert "purpose" in att, f"attachment missing `purpose`: {att}"
         assert "type" not in att, f"attachment uses legacy `type` instead of `purpose`: {att}"
         assert "start" in att, f"attachment missing `start`: {att}"
         assert "party" in att, f"attachment missing `party`: {att}"
-        assert "dialog" in att, f"attachment missing `dialog`: {att}"
+        assert "dialog" in att or "session" in att, f"attachment missing `dialog`/`session`: {att}"
         _assert_body_shape(att, "attachment")
 
     # Same body rule for analysis.
@@ -109,15 +111,19 @@ def sample_vcon_dict() -> dict[str, Any]:
     v = new_vcon(subject="Spec compliance sample", extensions=["sip-signaling"])
     v.add_party(Party(name="Caller", tel="+15555550100"))
     v.add_party(Party(name="Agent", tel="+15555550101"))
+    # One Session for the conversation: receivers (both endpoints) on the Session.
+    describe_session(v, start="2026-01-02T12:00:00Z", duration=60, receivers=[0, 1])
     v.add_dialog(
         Dialog(
             type="recording",
             start="2026-01-02T12:00:00Z",
+            # Dialog.parties are the contributors to this recording.
             parties=[0, 1],
             mediatype="audio/wav",
             url="https://example.com/recordings/sample.wav",
             content_hash="sha512-4kqcuBz1QLDYS93t2Bq6oGmVQI8-Fmcv5Ldg3f97vw",
-        )
+        ),
+        session=0,
     )
 
     cfg = LawfulBasisConfig(
@@ -125,10 +131,10 @@ def sample_vcon_dict() -> dict[str, Any]:
         purposes=("recording", "transcription"),
         jurisdiction="US-MA",
         expiration="2027-01-02T12:00:00Z",
-        proof_mechanism="audio_recording",
+        proof_mechanism="verbal_confirmation",
         proof_description="Verbal consent captured at start of recording",
     )
-    added = add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z", party=0, dialog=0)
+    added = add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z", party=0, session=0)
     assert added is True
 
     v.add_analysis(
@@ -136,8 +142,8 @@ def sample_vcon_dict() -> dict[str, Any]:
         dialog=0,
         vendor="openai-whisper",
         product="whisper-large-v3",
-        # -04 §2.3.2: encoding: "json" -> body is the raw JSON value, not a
-        # json.dumps() string.
+        # core-05 (Attachment Content / Analysis Content): encoding: "json"
+        # -> body is the raw JSON value, not a json.dumps() string.
         body={"text": "hello there"},
         encoding="json",
         schema="https://datatracker.ietf.org/doc/draft-howe-vcon-wtf-extension/",
@@ -145,10 +151,9 @@ def sample_vcon_dict() -> dict[str, Any]:
 
     # Same path a real adapter's delivery gets for free: WebhookDelivery and
     # ConserverDelivery both call finalize_vcon() before serializing. No
-    # test-side stripping here — if finalize_vcon() regresses or is removed,
-    # this fixture (and test_sample_vcon_with_lawful_basis_is_spec_compliant)
-    # fails, because vcon-lib's Dialog.to_dict() leaves empty `meta`/
-    # `metadata` placeholders on the dialog added above.
+    # test-side stripping here. vcon-lib 1.x no longer emits empty
+    # `meta`/`metadata` placeholders, but vCons built by older releases (or
+    # by hand) can, and the check below rejects them.
     return finalize_vcon(v.vcon_dict)
 
 
@@ -199,13 +204,14 @@ def test_non_string_analysis_body_fails_the_check() -> None:
             "body": {"not": "a string"},
         }
     ]
-    with pytest.raises(AssertionError, match="not a string"):
+    with pytest.raises(AssertionError, match=r"not a string|not of type .string."):
         assert_spec_compliant(bad, SCHEMA_PATH)
 
 
 def test_json_encoded_attachment_with_string_body_fails_the_check() -> None:
     """encoding: "json" with a `body` that's a `json.dumps()` string is
-    double-encoding under -04 §2.3.2 — `body` should be the raw JSON value.
+    double-encoding under core-05 (Attachment Content / Analysis Content) —
+    `body` should be the raw JSON value.
     """
     bad = new_vcon().vcon_dict
     bad["attachments"] = [

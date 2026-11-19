@@ -1,35 +1,55 @@
-"""Spec-compliant vCon construction (syntax 0.4.0, draft-ietf-vcon-vcon-core-04).
+"""Spec-compliant vCon construction (syntax 0.5.0, draft-ietf-vcon-vcon-core-05).
 
 Adapters should call the helpers in this module rather than constructing vCon
-fields directly. We route everything through the `vcon` library (>= 0.9.4)
-which is spec-correct out of the box for `add_party`, `add_dialog`,
-`add_attachment` (with `encoding="json"` + `party`/`dialog`), `add_analysis`
-(enforces required `vendor`), and `add_tag` (writes `party`/`dialog` since 0.9.3).
+fields directly. We route everything through the `vcon` library (>= 1.0.3,
+< 2), which is spec-correct for core-05 out of the box for `add_party`,
+`add_session`, `add_dialog`, `add_event`, `add_attachment` (with
+`encoding="json"` + `party` plus `dialog` or `session`), `add_analysis`
+(enforces required `vendor`), and `add_tag`.
+
+SESSIONS (the core-05 change that matters most for adapters)
+-------------------------------------------------------------
+core-05 has no party_history and no per-dialog originator. The model is:
+
+- One Session per conversation (one call, one chat thread, one email thread).
+  `new_vcon()` creates Session 0 for you; fill it in with `describe_session()`.
+  A second, related conversation (a transfer target, a callback) gets its own
+  Session from `Vcon.add_session()`, linked with a Session_Reference.
+- RECEIVERS live on the Session (`Session.parties`). The first receiver is the
+  implied originator; set `originator` only when someone else started it.
+- CONTRIBUTORS live on the Dialog (`Dialog.parties`): who spoke or wrote that
+  segment. Pass `session=<index>` to `Vcon.add_dialog()` so the Session lists
+  the Dialog index.
+- Who joined, left, was muted or transferred is an Event (`Vcon.add_event`),
+  never a party_history list.
+- Attachments need `party` plus `dialog` or `session`. The lib defaults the
+  scope only when the vCon has exactly one Session; with more, pass it.
+- The lawful basis attachment is scoped with `party` plus `session`.
 
 Why a thin wrapper at all (instead of using `Vcon` directly):
-- `build_new()` leaves empty `group: []` and `redacted: {}` on older vcon-lib
-  releases — we drop them defensively. As of vcon-lib >= 0.9.6 `build_new()`
-  already sets `vcon` syntax to "0.4.0" and no longer emits either key, but
-  we keep the `pop()` calls (no-ops when absent) in case an adapter pins an
-  older vcon-lib.
+- `build_new()` is wrapped so every vCon starts with the syntax and the
+  Session that core-05 requires once a Dialog or Event exists. Older vcon-lib
+  releases left empty `group: []` and `redacted: {}`; we keep defensive
+  `pop()` calls (no-ops on current vcon-lib).
 - `subject` has no setter on the class — we write via vcon_dict["subject"].
 - Convenience: `sha512_b64url()` for external-media content_hash formatting.
 
-JSON bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): with `encoding: "json"`,
-`body` is the JSON value itself (object/array/number/bool/null) — NOT a
-`json.dumps()` string. (Only -02 required a string body for JSON content;
--04's CDDL is `body: any`, and the vendored schema already allowed "any
-type for encoding=json".) `add_lawful_basis()` below follows this. When
-reading a JSON body back, use `json_body()` — it accepts both the -04 raw
-value and a legacy `json.dumps`-string body, for compatibility with vCons
-built under -02 rules (including earlier commits of this template).
+JSON bodies (draft-ietf-vcon-vcon-core-05, Attachment Content / Analysis
+Content): with `encoding: "json"`, `body` is the JSON value itself
+(object/array/number/bool/null) — NOT a `json.dumps()` string. (Only -02
+required a string body for JSON content; -04's CDDL is `body: any`, and the
+vendored schema already allowed "any type for encoding=json".)
+`add_lawful_basis()` below follows this. When reading a JSON body back, use
+`json_body()` — it accepts both the -04 raw value and a legacy
+`json.dumps`-string body, for compatibility with vCons built under -02 rules
+(including earlier commits of this template).
 
 Lawful basis (draft-howe-vcon-lawful-basis, extension name "lawful_basis"):
-use `LawfulBasisConfig` + `add_lawful_basis()` below. Do NOT use vcon-lib's
-`Vcon.add_lawful_basis_attachment()` — as of vcon-lib 0.9.6 its output is
-missing the required `start` field and the `mediatype` the vendored schema
-requires on any attachment with a non-empty body (its `body` itself, a
-dict, is fine under -04).
+use `LawfulBasisConfig` + `add_lawful_basis()` below. Prefer this
+helper over vcon-lib's `Vcon.add_lawful_basis_attachment()`: it builds the
+body from adapter config, scopes it with `party` plus `session`, uses
+`granted_at` as `start` (vcon-lib uses the vCon's `created_at`), and never
+invents a basis.
 """
 
 from __future__ import annotations
@@ -43,13 +63,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from vcon import Vcon
+from vcon.session import Session
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 log = logging.getLogger(__name__)
 
-VCON_SYNTAX = "0.4.0"
+VCON_SYNTAX = "0.5.0"
 
 # The six GDPR lawful bases, per draft-howe-vcon-lawful-basis.
 VALID_LAWFUL_BASES = frozenset(
@@ -74,7 +95,14 @@ def new_vcon(
     subject: str | None = None,
     extensions: list[str] | None = None,
 ) -> Vcon:
-    """Create a new vCon with the spec-correct syntax param and cleanup."""
+    """Create a new core-05 vCon containing one empty Session (index 0).
+
+    core-05 requires at least one Session as soon as the vCon has a Dialog or
+    Event, so the template creates Session 0 up front. An empty Session
+    (`{}`) is valid. Fill it in with `describe_session()` once you know the
+    start time and receivers. For a second conversation in the same vCon call
+    `vcon.add_session(Session(...))` yourself.
+    """
     v = Vcon.build_new()
     v.vcon_dict["vcon"] = VCON_SYNTAX
 
@@ -90,7 +118,45 @@ def new_vcon(
     if extensions:
         v.vcon_dict["extensions"] = list(extensions)
 
+    # One Session per conversation. Dialogs, Events and attachments point at
+    # it by index. See the module docstring.
+    if not v.vcon_dict.get("sessions"):
+        v.add_session()
+
     return v
+
+
+def describe_session(
+    vcon: Vcon,
+    *,
+    index: int = 0,
+    start: str | None = None,
+    duration: float | None = None,
+    receivers: list[int] | None = None,
+    originator: int | None = None,
+    session_id: dict[str, str] | None = None,
+) -> None:
+    """Fill in Session `index` (default: the one `new_vcon()` made).
+
+    `receivers` are party indices (positions in `parties[]`) that took part in
+    the conversation as endpoints. The first one is the implied originator, so
+    pass `originator` only when someone else started it. Contributors to an
+    individual Dialog are NOT set here: pass `parties=[...]` on the `Dialog`.
+
+    Only the arguments you pass are changed. `Dialog` indices are managed by
+    `Vcon.add_dialog(..., session=index)`, not here.
+    """
+    sessions = vcon.vcon_dict.get("sessions") or []
+    if not 0 <= index < len(sessions):
+        raise ValueError(f"no Session at index {index}; the vCon has {len(sessions)}")
+    fields = Session(
+        start=start,
+        duration=duration,
+        parties=receivers,
+        originator=originator,
+        session_id=session_id,
+    ).to_dict()
+    sessions[index].update(fields)
 
 
 def sha512_b64url(data: bytes) -> str:
@@ -171,8 +237,10 @@ class LawfulBasisConfig:
     purposes: tuple[str, ...] = ("recording",)
     jurisdiction: str | None = None
     expiration: str | None = None  # ISO 8601
-    proof_mechanism: str | None = None  # mechanism_type, e.g. "external_system"
-    proof_description: str | None = None
+    # proof_type: verbal_confirmation, signed_document, cryptographic_signature
+    # or external_system
+    proof_mechanism: str | None = None
+    proof_description: str | None = None  # written to proof_data.description
 
     def __post_init__(self) -> None:
         if self.lawful_basis is not None and self.lawful_basis not in VALID_LAWFUL_BASES:
@@ -271,13 +339,17 @@ def add_lawful_basis(
     *,
     granted_at: str,
     party: int = 0,
-    dialog: int = 0,
+    session: int | list[int] | None = None,
 ) -> bool:
     """Attach a `lawful_basis` record (draft-howe-vcon-lawful-basis) to `vcon`.
 
     Returns False and adds nothing if `cfg.lawful_basis` is unset (logging a
     warning once per process). Returns True and appends the attachment
     (plus the `lawful_basis` extension, deduped) otherwise.
+
+    The attachment is scoped with `party` (whose basis it is) plus `session`
+    (which conversation it covers). With `session=None` the only Session is
+    used; if the vCon has several, pass `session` explicitly. We never guess.
 
     `granted_at` is the ISO 8601 timestamp the basis was established (used
     as the attachment's `start` and each purpose grant's `granted_at`).
@@ -294,32 +366,45 @@ def add_lawful_basis(
             _warned_no_lawful_basis = True
         return False
 
-    body: dict[str, Any] = {"lawful_basis": cfg.lawful_basis}
-    if cfg.expiration is not None:
-        body["expiration"] = cfg.expiration
+    # `expiration` is required by the draft; null means indefinite.
+    body: dict[str, Any] = {"lawful_basis": cfg.lawful_basis, "expiration": cfg.expiration}
     body["purpose_grants"] = [
         {"purpose": purpose, "granted": True, "granted_at": granted_at} for purpose in cfg.purposes
     ]
     if cfg.jurisdiction is not None:
         body["jurisdiction"] = cfg.jurisdiction
     if cfg.proof_mechanism is not None:
-        proof_mechanism: dict[str, Any] = {"mechanism_type": cfg.proof_mechanism}
+        # Proof mechanism object (draft section 5.2.4): proof_type, timestamp,
+        # proof_data are all required.
+        proof_data: dict[str, Any] = {}
         if cfg.proof_description is not None:
-            proof_mechanism["description"] = cfg.proof_description
-        body["proof_mechanisms"] = [proof_mechanism]
+            proof_data["description"] = cfg.proof_description
+        body["proof_mechanisms"] = [
+            {"proof_type": cfg.proof_mechanism, "timestamp": granted_at, "proof_data": proof_data}
+        ]
+
+    if session is None:
+        sessions = vcon.vcon_dict.get("sessions") or []
+        if len(sessions) != 1:
+            raise ValueError(
+                f"add_lawful_basis() needs session= when the vCon has {len(sessions)} "
+                "Sessions (only a single-Session vCon has an unambiguous default)"
+            )
+        session = 0
 
     vcon.vcon_dict["attachments"].append(
         {
             "purpose": "lawful_basis",
             "start": granted_at,
             "party": party,
-            "dialog": dialog,
+            "session": session,
             "encoding": "json",
             # The vendored core schema (tests/schema/vcon_json_schema.json)
             # requires `mediatype` on any attachment with a non-empty `body`.
             "mediatype": "application/json",
-            # -04 §2.3.2: with encoding: "json", body IS the JSON value —
-            # not a json.dumps() string. Do not stringify this.
+            # core-05 (Attachment Content / Analysis Content): with
+            # encoding: "json", body IS the JSON value, not a json.dumps()
+            # string. Do not stringify this.
             "body": body,
         }
     )
@@ -335,9 +420,10 @@ def json_body(attachment: Mapping[str, Any]) -> Any:
     """Return an `encoding: "json"` attachment's (or analysis's) `body` as a
     Python value.
 
-    -04 §2.3.2 says `body` for `encoding: "json"` IS the JSON value, not a
-    string — but a reader may still meet vCons built under -02 rules (or by
-    an emitter that hasn't caught up), where `body` was `json.dumps()`'d.
+    core-05 (Attachment Content / Analysis Content) says `body` for
+    `encoding: "json"` IS the JSON value, not a string — but a reader may
+    still meet vCons built under -02 rules (or by an emitter that hasn't
+    caught up), where `body` was `json.dumps()`'d.
     Accept both: if `body` is already a non-string JSON value, return it as
     is; if it's a `str`, `json.loads()` it first.
 

@@ -1,0 +1,662 @@
+; CDDL for the JSON vCon - Conversation Data Container
+; Generated from the prose of draft-ietf-vcon-vcon-core
+; (syntax version 0.5.0).
+; The prose of the draft is normative.
+; This CDDL is informative.
+; Constraints that cannot be expressed in CDDL are stated in
+; comments.
+;
+; This CDDL follows the text of the draft at commit 7f1fee9.
+;
+; This CDDL is strict.  A parameter or value which is not defined
+; here does not validate, unless the CDDL of the vCon extension
+; which defines it is used together with this CDDL.  Failing
+; validation against this CDDL is not by itself a reason to
+; reject a vCon.  The draft defines how parameters and values
+; which are not recognized are handled (see Extending vCon).
+;
+; Extension points
+; ----------------
+; The extension points are CDDL sockets (RFC 8610, Section 3.9).
+;
+; 1. Adding parameters to an Object.
+;
+; Each Object ends with a group socket named for that Object.
+; A vCon extension adds parameters to that Object only, with for
+; example:
+;
+;     $$party-ext //= ( ? example_parameter: tstr )
+;
+; The "*" before each of these sockets allows the socket to match
+; nothing, so that this CDDL can be used with no extensions, and
+; allows more than one extension to add to the same Object.
+;
+; 2. Adding a value which selects other parameters.
+;
+; The dialog-type-ext socket adds a Dialog Object type along with
+; the parameters which apply to that type.  The event-type-ext
+; socket does the same for an Event Object type.  An Event Object
+; type defined in a vCon extension may allow the value of its
+; dialog parameter to be an array of Dialog Object indices
+; (dialog_index_or_list_type).  The encoding-ext
+; socket adds an encoding value along with the form of the body
+; parameter for that encoding.  For example:
+;
+;     $$dialog-type-ext //= example_dialog_type
+;     example_dialog_type = (
+;         type: "example",
+;         dialog_common_type,
+;         ? example_parameter: tstr,
+;         * $$example-dialog-ext
+;       )
+;
+;     $$encoding-ext //= ( encoding: "example", body: tstr )
+;
+; A group which defines a new type is best given a rule name and
+; ended with a socket of its own, as above, so that another
+; extension can add parameters to that type.
+;
+; 3. Adding a value to a list of values.
+;
+; The disposition-ext socket adds a disposition value.  The
+; session-reference-type-ext socket adds a Session_Reference
+; Object type value.  For example:
+;
+;     $disposition-ext /= "example"
+;
+; The sockets in 2 and 3 are alternatives in a choice.  They have
+; no "*" and are not to be given one.
+;
+; The header objects of the signed and encrypted forms have no
+; socket.  They are open, as any JWS or JWE header parameter MAY
+; be present in them.
+
+; A vCon JSON object is in one of three forms: unsigned, signed
+; (JWS) or encrypted (JWE).
+
+vcon = unsigned_vcon_type / signed_vcon_type / encrypted_vcon_type
+
+; Unsigned Form of vCon Object
+;_____________________________
+
+; Not enforced by this CDDL:
+; - At least one Session Object MUST exist if the events array or
+;   the dialog array contain Objects.
+; - An index MUST refer to an Object which exists in the array
+;   that it indexes.
+unsigned_vcon_type = {
+    ; DEPRECATED
+    ? "vcon": "0.5.0",
+    uuid: uuid_value_type,
+    ? extensions: [* tstr],
+    ? critical: [* tstr],
+    created_at: date_type,
+    ? updated_at: date_type,
+    ? subject: tstr,
+    ; redacted_from and amended_from are mutually exclusive
+    ? ( redacted_from: redacted_from_object_type //
+        amended_from: amended_from_object_type ),
+    ? redacted_strings: [* redacted_string_object_type],
+    ; at least one of parties, dialog, analysis or attachments
+    ; SHOULD be present
+    ? sessions: [* session_object_type],
+    ? parties: [* party_object_type],
+    ? events: [* event_object_type],
+    ? dialog: [* dialog_object_type],
+    ? analysis: [* analysis_object_type],
+    ? attachments: [* attachment_object_type],
+    * $$vcon-ext
+  }
+
+; Object and multi-parameter types
+;_________________________________
+
+; Redacted_from Object
+; uuid SHOULD be provided.
+; content_hash MUST be provided if url is provided.
+; type has the same set of values as the type parameter of the
+; Redacted_string Object.
+redacted_from_object_type = {
+    ? uuid: uuid_value_type,
+    type: tstr,
+    ? ( url: url_value_type,
+        content_hash: content_hash_type ),
+    * $$redacted-from-ext
+  }
+
+; Amended_from Object
+; uuid is optional only if an external reference is provided.
+; content_hash MUST be provided if url is provided.
+amended_from_object_type = {
+    ? uuid: uuid_value_type,
+    ? ( url: url_value_type,
+        content_hash: content_hash_type ),
+    * $$amended-from-ext
+  }
+
+; Redacted_string Object
+; Not enforced by this CDDL:
+; - Each "__REDACTED_REF_#" substring in the vCon has a
+;   Redacted_string Object with a matching ref value.
+redacted_string_object_type = {
+    ref: 1..99999,
+    ; type is an extensible string enumeration: "GOVT_ID_NUM",
+    ; "FIN_ID_NUM", "MED_ID_NUM", "BIOMETRIC", "AUTH_DATA",
+    ; "CONTACT_INFO", "LOC_INFO", "EMPL_INFO", "BELIEF_INFO",
+    ; "UNSPECIFIED" or another value; absent is "UNSPECIFIED"
+    ? type: tstr,
+    ? orig: tstr,
+    * $$redacted-string-ext
+  }
+
+; Session Object
+; A Session Object with no parameters is permitted.
+; start and duration define the time period of the session,
+; which need not include the entire time period of its Dialog
+; and Event Objects.
+session_object_type = {
+    ; start SHOULD be present
+    ? start: date_type,
+    ? duration: duration_type,
+    ; parties SHOULD be present; the first party is the implied
+    ; originator of the session
+    ? parties: [* party_index_type],
+    ; only provided if the first party in parties is not the
+    ; originator
+    ? originator: party_index_type,
+    ; a single SessionId Object
+    ? session_id: session_id_object_type,
+    ? sessions: [* session_reference_object_type],
+    ? dialog: [* dialog_index_type],
+    * $$session-ext
+  }
+
+; Session_Reference Object
+session_reference_object_type = {
+    session: session_index_type,
+    type: session_reference_type_value_type,
+    ? description: tstr,
+    * $$session-reference-ext
+  }
+
+session_reference_type_value_type = "child" / "peer" /
+    "precursor" / "breakout" / $session-reference-type-ext
+
+; Event Object
+; The type selects which parameters apply (see Event Object
+; Parameter Applicability by Type).
+; A vCon extension adds an Event Object type through the
+; event-type-ext socket and adds parameters to all Event Object
+; types through the event-ext socket.
+; Not enforced by this CDDL:
+; - An Event Object applies only to the Session Objects listed in
+;   its sessions parameter, and not to their child or parent
+;   Session Objects unless they are also listed.
+event_object_type = {
+    ( event_party_type //
+      event_key_type //
+      event_consultation_start_type //
+      event_blind_transfer_type //
+      event_consultative_transfer_type //
+      event_transfer_abandoned_type //
+      event_channel_contributors_type //
+      $$event-type-ext ),
+    * $$event-ext
+  }
+
+; Parameters common to the party and key event types
+event_common_type = (
+    "time": date_type,
+    sessions: session_index_or_list_type,
+    party: party_index_type,
+    ; dialog SHOULD NOT be present
+    ? dialog: dialog_index_type
+  )
+
+; Parameters common to the transfer event types
+; sessions is a single index which references the Session Object
+; for the original call, and party references the Transferor.
+event_transfer_common_type = (
+    "time": date_type,
+    sessions: session_index_type,
+    party: party_index_type,
+    ; dialog SHOULD NOT be present
+    ? dialog: dialog_index_type
+  )
+
+; Party event types
+event_party_type = (
+    type: "join" / "drop" / "hold" / "unhold" / "mute" / "unmute",
+    event_common_type
+  )
+
+; Key event types
+event_key_type = (
+    type: "keydown" / "keyup",
+    event_common_type,
+    button: tstr
+  )
+
+; Transfer event types
+; transferee and transfer_target reference Party Objects.
+; consultation and target_session reference Session Objects.
+event_consultation_start_type = (
+    type: "consultation-start",
+    event_transfer_common_type,
+    transferee: party_index_type,
+    transfer_target: party_index_type,
+    consultation: session_index_type
+  )
+
+event_blind_transfer_type = (
+    type: "blind-transfer",
+    event_transfer_common_type,
+    transferee: party_index_type,
+    transfer_target: party_index_type,
+    target_session: session_index_type
+  )
+
+event_consultative_transfer_type = (
+    type: "consultative-transfer",
+    event_transfer_common_type,
+    transferee: party_index_type,
+    transfer_target: party_index_type,
+    consultation: session_index_type,
+    target_session: session_index_type
+  )
+
+event_transfer_abandoned_type = (
+    type: "transfer-abandoned",
+    event_transfer_common_type,
+    transferee: party_index_type,
+    ? transfer_target: party_index_type,
+    ? consultation: session_index_type
+  )
+
+; Channel contributors event type
+; sessions and party MUST NOT be present.  The sessions of the
+; event are the Session Objects which reference its Dialog
+; Object.
+; Not enforced by this CDDL:
+; - dialog MUST reference a "recording" type Dialog Object.
+; - channel MUST be less than the number of channels in the
+;   recording.
+event_channel_contributors_type = (
+    type: "channel-contributors",
+    "time": date_type,
+    dialog: dialog_index_type,
+    channel: uint,
+    ; absent or null: no party contributes to the channel
+    ? contributors: party_index_type / [* party_index_type] /
+        null
+  )
+
+; Party Object
+; A Party Object with no parameters is permitted.
+party_object_type = {
+    ? tel: tstr,
+    ? sip: tstr,
+    ? stir: tstr,
+    ? mailto: tstr,
+    ? name: tstr,
+    ? did: tstr,
+    ? validation: tstr,
+    ? gmlpos: tstr,
+    ? civicaddress: civicaddress_type,
+    ; a free form unique identifier for the participant;
+    ; not constrained to UUID syntax
+    ? uuid: tstr,
+    ; type SHOULD be "person", "bot" or "organization"
+    ? type: tstr,
+    ? org: tstr,
+    ? dept: tstr,
+    * $$party-ext
+  }
+
+; Civicaddress Object
+civicaddress_type = {
+    ? country: tstr,
+    ? a1: tstr,
+    ? a2: tstr,
+    ? a3: tstr,
+    ? a4: tstr,
+    ? a5: tstr,
+    ? a6: tstr,
+    ? prd: tstr,
+    ? pod: tstr,
+    ? sts: tstr,
+    ? hno: tstr,
+    ? hns: tstr,
+    ? lmk: tstr,
+    ? loc: tstr,
+    ? flr: tstr,
+    ? nam: tstr,
+    ? pc: tstr,
+    * $$civicaddress-ext
+  }
+
+; Dialog Object
+; The type selects which parameters apply (see Dialog Object
+; Parameter Applicability by Type).
+; A placeholder Dialog Object contains only the type parameter and,
+; for the "incomplete" type, the required disposition parameter.
+; A placeholder Dialog Object MUST be of type "recording" if the
+; call was set up, or of type "incomplete" if it was not.
+; An empty Dialog Object has no type and no meaning; it holds a
+; position in the dialog array.
+; A vCon extension adds a Dialog Object type through the
+; dialog-type-ext socket and adds parameters to all Dialog Object
+; types through the dialog-ext socket.
+dialog_object_type = {
+    ( dialog_recording_type //
+      dialog_text_type //
+      dialog_incomplete_type //
+      $$dialog-type-ext ),
+    * $$dialog-ext
+  } / empty_dialog_object_type
+
+empty_dialog_object_type = {}
+
+; Parameters common to all Dialog Object types
+dialog_common_type = (
+    ; start SHOULD be present; MAY be omitted if not known
+    ? start: date_type,
+    ? duration: duration_type,
+    ? session_id: session_id_parameter_type,
+    ? application: tstr
+  )
+
+dialog_recording_type = (
+    type: "recording",
+    dialog_common_type,
+    dialog_media_based_type
+  )
+
+dialog_text_type = (
+    type: "text",
+    dialog_common_type,
+    dialog_media_based_type
+  )
+
+; Parameters of the "recording" and "text" type Dialog Objects
+dialog_media_based_type = (
+    ; parties SHOULD be present
+    ? parties: dialog_parties_type,
+    ; mediatype MUST be present for inline content; not required
+    ; when Dialog Content is absent
+    ? mediatype: media_type_value_type,
+    ? filename: tstr,
+    ? message_id: tstr,
+    ; disposition SHOULD NOT be present
+    ? disposition: disposition_value_type,
+    ; redacted_segments SHOULD NOT be present in "text" type
+    ; Dialog Objects
+    ? redacted_segments: [* redacted_segments_object_type],
+    ; Dialog Content SHOULD be present;
+    ; body or url MAY be absent if redacted
+    ? file_content_type
+  )
+
+; Redacted_segments Object
+; TODO: should use duration instead of end?
+redacted_segments_object_type = {
+    start: date_type,
+    end: date_type,
+    ? parties: [* party_index_type],
+    * $$redacted-segments-ext
+  }
+
+; mediatype, filename, message_id, redacted_segments and Dialog
+; Content MUST NOT be present in "incomplete" type Dialog
+; Objects.
+dialog_incomplete_type = (
+    type: "incomplete",
+    dialog_common_type,
+    ? parties: dialog_parties_type,
+    ; "failed" SHOULD be used when the reason is not known
+    disposition: disposition_value_type
+  )
+
+; Attachment Object
+attachment_object_type = {
+    ? purpose: tstr,
+    start: date_type,
+    party: party_index_type,
+    ; at least one of dialog or session MUST be present
+    ( ( dialog: dialog_index_type,
+        ? session: session_index_or_list_type ) //
+      session: session_index_or_list_type ),
+    ; mediatype MUST be present for inline content; not required
+    ; when Attachment Content is absent
+    ? mediatype: media_type_value_type,
+    ? filename: tstr,
+    ; Attachment Content SHOULD be present;
+    ; body or url MAY be absent if redacted
+    ? file_content_type,
+    * $$attachment-ext
+  }
+
+; Analysis Object
+; At least one of dialog, sessions, attachment or analysis SHOULD
+; be present.
+; An Analysis Object MUST NOT reference itself in the analysis
+; parameter.  This is not enforced by this CDDL.
+analysis_object_type = {
+    ; type SHOULD be one of: "report", "sentiment", "summary",
+    ; "transcript", "translation", "tts"
+    type: tstr,
+    ? dialog: dialog_index_or_list_type,
+    ? sessions: session_index_or_list_type,
+    ? attachment: attachment_index_or_list_type,
+    ? analysis: analysis_index_or_list_type,
+    ; mediatype SHOULD be present for inline content; when no
+    ; media type is defined for the analysis data format, the
+    ; vendor, product and schema parameters SHOULD identify the
+    ; format instead
+    ? mediatype: media_type_value_type,
+    ? filename: tstr,
+    vendor: tstr,
+    ? product: tstr,
+    ? schema: tstr,
+    ; Analysis Content SHOULD be present;
+    ; body or url MAY be absent if redacted
+    ? file_content_type,
+    * $$analysis-ext
+  }
+
+; Inline Files and Externally Referenced Files
+;_____________________________________________
+
+; When the url of externally referenced content has been
+; redacted, the content_hash MAY remain without the url.
+file_content_type = ( inline_content_type //
+    external_content_type // redacted_content_type )
+
+; body is any JSON value when encoding is "json";
+; otherwise body is a string.
+; A vCon extension which adds an encoding value also defines the
+; form of body for that encoding.
+inline_content_type = (
+    ( encoding: "json",
+      body: any ) //
+    ( encoding: "none" / "base64url",
+      body: tstr ) //
+    $$encoding-ext
+  )
+
+external_content_type = (
+    url: url_value_type,
+    content_hash: content_hash_type
+  )
+
+redacted_content_type = (
+    content_hash: content_hash_type
+  )
+
+; SessionId Object
+; The empty object is the placeholder for a party with no session id.
+session_id_object_type = {
+    ? "local": uuid_value_type,
+    ? "remote": uuid_value_type
+  }
+
+session_id_parameter_type =
+    session_id_object_type /
+    [* ( session_id_object_type / [* session_id_object_type] )]
+
+; Basic types and single parameter types
+;_______________________________________
+
+; RFC3339 date string
+; The pattern is in two parts only to keep the lines short.  The
+; first 19 characters are the date, "T" and the time.  The rest is
+; the optional fraction of a second and the time zone offset.
+date_type = date_and_time_type .and date_offset_type
+date_and_time_type = tstr .regexp
+    "[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}.*"
+date_offset_type = tstr .regexp
+    ".{19}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})"
+
+; String token of the form: hash algorithm, "-", Base64Url encoded
+; digest, e.g. "sha512-..."
+content_hash_value_type = tstr .regexp "[a-z0-9]+-[A-Za-z0-9_-]+"
+
+content_hash_type =
+    content_hash_value_type / [* content_hash_value_type]
+
+; Duration in seconds; MUST be non-negative
+duration_type = uint / float
+
+; Dialog Object disposition values
+disposition_value_type = "no-answer" / "congestion" / "failed" /
+    "busy" / "hung-up" / "voicemail-no-message" /
+    $disposition-ext
+
+; Media type of the form: type "/" subtype
+media_type_value_type = tstr .regexp
+    "[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(;.*)?"
+
+party_index_type = uint
+
+dialog_index_type = uint
+
+dialog_index_or_list_type = dialog_index_type / [* dialog_index_type]
+
+attachment_index_type = uint
+
+attachment_index_or_list_type =
+    attachment_index_type / [* attachment_index_type]
+
+session_index_type = uint
+
+session_index_or_list_type =
+    session_index_type / [* session_index_type]
+
+analysis_index_type = uint
+
+analysis_index_or_list_type =
+    analysis_index_type / [* analysis_index_type]
+
+; Index or indices of parties; the nested array form is used for
+; multi-channel recordings with one entry per channel; null is the
+; placeholder for an unused channel.
+dialog_parties_type = party_index_type /
+    [* ( party_index_type / [* party_index_type] / null )]
+
+; UUID string
+uuid_value_type = tstr .regexp
+    "[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+
+; HTTPS URL
+url_value_type = tstr .regexp "https://.+"
+
+; Signed Form of vCon Object
+;___________________________
+
+signed_vcon_type = {
+    payload: base64url_value_type,
+    signatures: [+ signature_object_type],
+    * $$signed-ext
+  }
+
+; Signature Object
+signature_object_type = {
+    header: signed_header_object_type,
+    ; present when the JWS Protected Header is not empty
+    ? protected: base64url_value_type,
+    signature: base64url_value_type,
+    * $$signature-ext
+  }
+
+; Header Object of the signed form
+; MUST include at least one of x5c or x5u.
+; Other JWS header parameters MAY be present.
+; Not enforced by this CDDL, as the JWS Protected Header is an
+; opaque string here:
+; - alg MUST be present here or in the JWS Protected Header, and
+;   SHOULD be in the JWS Protected Header.
+; - alg MUST NOT be "none" in the JWS Protected Header.
+; - A header parameter MUST NOT be present in both the JWS
+;   Protected Header and the Header Object.
+signed_header_object_type = {
+    ; SHOULD be "RS256"; MUST NOT be "none"
+    ? alg: tstr .ne "none",
+    ( ( x5c: [+ tstr],
+        ? x5u: url_value_type ) //
+      x5u: url_value_type ),
+    ? uuid: uuid_value_type,                 ; SHOULD be provided
+    * tstr => any
+  }
+
+; Encrypted Form of vCon Object
+;______________________________
+
+; Not enforced by this CDDL, as the JWE Protected Header is an
+; opaque string here:
+; - enc MUST be present in the JWE Protected Header or the
+;   Unprotected Object.
+; - alg MUST be present in the JWE Protected Header, the
+;   Unprotected Object or the Header Object of each recipient.
+; - A header parameter MUST NOT be present in more than one of
+;   those locations.
+encrypted_vcon_type = {
+    ? protected: base64url_value_type,
+    unprotected: unprotected_object_type,
+    recipients: [+ recipient_object_type],
+    iv: base64url_value_type,
+    ciphertext: base64url_value_type,
+    tag: base64url_value_type,
+    ? aad: base64url_value_type,
+    * $$encrypted-ext
+  }
+
+; Unprotected Object
+; Other JWE header parameters MAY be present.
+unprotected_object_type = {
+    ; cty SHOULD be "application/vcon" or "application/vcon+gzip"
+    cty: tstr,
+    ; enc SHOULD be "A256CBC-HS512"
+    ? enc: tstr,
+    ? alg: tstr,
+    ? uuid: uuid_value_type,                 ; SHOULD be provided
+    * tstr => any
+  }
+
+; Recipient Object
+; A Recipient Object with no parameters is permitted.
+recipient_object_type = {
+    ? header: recipient_header_object_type,
+    ; present when the JWE Encrypted Key is not empty
+    ? encrypted_key: base64url_value_type,
+    * $$recipient-ext
+  }
+
+; Header Object of a recipient in the encrypted form
+; Other JWE header parameters MAY be present.
+recipient_header_object_type = {
+    ? alg: tstr,                             ; SHOULD be "RSA-OAEP"
+    * tstr => any
+  }
+
+; Base64Url encoded string
+base64url_value_type = tstr .regexp "[A-Za-z0-9_-]+"

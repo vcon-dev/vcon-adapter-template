@@ -16,6 +16,7 @@ from __ADAPTER_PACKAGE__.vcon_builder import (
     VCON_SYNTAX,
     LawfulBasisConfig,
     add_lawful_basis,
+    describe_session,
     external_media_url,
     finalize_vcon,
     json_body,
@@ -24,10 +25,10 @@ from __ADAPTER_PACKAGE__.vcon_builder import (
 )
 
 
-def test_syntax_is_0_4_0() -> None:
+def test_syntax_is_0_5_0() -> None:
     v = new_vcon()
-    assert v.vcon_dict["vcon"] == "0.4.0"
-    assert VCON_SYNTAX == "0.4.0"
+    assert v.vcon_dict["vcon"] == "0.5.0"
+    assert VCON_SYNTAX == "0.5.0"
 
 
 def test_build_new_strips_group_and_redacted() -> None:
@@ -89,8 +90,8 @@ def test_lib_add_analysis_requires_vendor() -> None:
         v.add_analysis(type="transcript", dialog=0, body="hi")  # type: ignore[call-arg]
 
 
-def test_lib_add_tag_writes_party_and_dialog() -> None:
-    """vcon-lib >=0.9.3 writes `party`/`dialog` on the tags attachment correctly."""
+def test_lib_add_tag_writes_party_and_session() -> None:
+    """vcon-lib >=0.9.3 writes `party`/`session` on the tags attachment."""
     v = new_vcon()
     v.add_tag("source", "test-platform")
     v.add_tag("session_id", "abc123")
@@ -98,7 +99,9 @@ def test_lib_add_tag_writes_party_and_dialog() -> None:
     assert tags_atts, "add_tag should have produced a tags attachment"
     for att in tags_atts:
         assert att["party"] == 0
-        assert att["dialog"] == 0
+        # new_vcon() made Session 0; add_tag scopes the attachment to it.
+        assert att["session"] == [0]
+        assert len(v.vcon_dict["sessions"]) == 1
 
 
 def test_content_hash_format() -> None:
@@ -255,11 +258,11 @@ def test_add_lawful_basis_set_produces_exact_attachment_shape() -> None:
         purposes=("recording", "transcription"),
         jurisdiction="US-MA",
         expiration="2026-01-02T12:00:00Z",
-        proof_mechanism="audio_recording",
+        proof_mechanism="verbal_confirmation",
         proof_description="Verbal consent captured at start of recording",
     )
 
-    added = add_lawful_basis(v, cfg, granted_at="2025-01-02T12:15:30Z", party=0, dialog=0)
+    added = add_lawful_basis(v, cfg, granted_at="2025-01-02T12:15:30Z", party=0, session=0)
 
     assert added is True
     atts = [a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis"]
@@ -270,7 +273,8 @@ def test_add_lawful_basis_set_produces_exact_attachment_shape() -> None:
     assert "type" not in att  # never the legacy `type` field
     assert att["start"] == "2025-01-02T12:15:30Z"
     assert att["party"] == 0
-    assert att["dialog"] == 0
+    assert att["session"] == 0  # scoped with party plus session
+    assert "dialog" not in att
     assert att["encoding"] == "json"
     assert att["mediatype"] == "application/json"
     # -04 §2.3.2: encoding: "json" -> body is the raw JSON value, not a
@@ -288,8 +292,9 @@ def test_add_lawful_basis_set_produces_exact_attachment_shape() -> None:
     ]
     assert body["proof_mechanisms"] == [
         {
-            "mechanism_type": "audio_recording",
-            "description": "Verbal consent captured at start of recording",
+            "proof_type": "verbal_confirmation",
+            "timestamp": "2025-01-02T12:15:30Z",
+            "proof_data": {"description": "Verbal consent captured at start of recording"},
         }
     ]
 
@@ -304,9 +309,35 @@ def test_add_lawful_basis_omits_optional_keys_when_not_configured() -> None:
 
     att = next(a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis")
     body = att["body"]
-    assert "expiration" not in body
+    assert body["expiration"] is None  # required; null means indefinite
     assert "jurisdiction" not in body
     assert "proof_mechanisms" not in body
+
+
+@pytest.mark.parametrize(
+    ("expiration", "proof_mechanism"),
+    [(None, None), ("2099-01-01T00:00:00Z", "external_system")],
+)
+def test_add_lawful_basis_body_passes_vcon_lib_lawful_basis_validator(
+    expiration: str | None, proof_mechanism: str | None
+) -> None:
+    """vcon-lib's lawful_basis validator is the reference for the body shape:
+    `expiration` is always present and proof mechanisms carry proof_type,
+    timestamp and proof_data."""
+    from vcon.extensions.lawful_basis.validation import LawfulBasisValidator
+
+    v = new_vcon()
+    cfg = LawfulBasisConfig(
+        lawful_basis="consent",
+        expiration=expiration,
+        proof_mechanism=proof_mechanism,
+        proof_description="consent captured via IVR",
+    )
+    add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z")
+
+    att = next(a for a in v.vcon_dict["attachments"] if a["purpose"] == "lawful_basis")
+    result = LawfulBasisValidator().validate_attachment(att)
+    assert result.is_valid, result.errors
 
 
 def test_add_lawful_basis_does_not_duplicate_extension() -> None:
@@ -419,3 +450,41 @@ def test_json_body_on_real_add_lawful_basis_attachment_round_trips() -> None:
 
     assert json_body(att) == att["body"]
     assert json_body(att)["lawful_basis"] == "consent"
+
+
+# --- sessions -------------------------------------------------------------
+
+
+def test_new_vcon_has_one_empty_session() -> None:
+    v = new_vcon()
+    assert v.vcon_dict["sessions"] == [{}]
+
+
+def test_describe_session_sets_receivers_and_leaves_dialog_to_add_dialog() -> None:
+    from vcon.dialog import Dialog
+
+    v = new_vcon()
+    describe_session(v, start="2026-01-02T12:00:00Z", duration=30, receivers=[0, 1])
+    idx = v.add_dialog(
+        Dialog(type="text", start="2026-01-02T12:00:01Z", parties=[1], body="hi"), session=0
+    )
+    s = v.vcon_dict["sessions"][0]
+    assert s["parties"] == [0, 1]  # receivers on the Session
+    assert s["duration"] == 30
+    assert s["dialog"] == [idx]
+    assert v.vcon_dict["dialog"][idx]["parties"] == [1]  # contributors on the Dialog
+
+
+def test_describe_session_rejects_bad_index() -> None:
+    with pytest.raises(ValueError, match="no Session"):
+        describe_session(new_vcon(), index=3, start="2026-01-02T12:00:00Z")
+
+
+def test_lawful_basis_requires_explicit_session_when_ambiguous() -> None:
+    v = new_vcon()
+    v.add_session()
+    cfg = LawfulBasisConfig(lawful_basis="consent")
+    with pytest.raises(ValueError, match="session="):
+        add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z")
+    assert add_lawful_basis(v, cfg, granted_at="2026-01-02T12:00:00Z", session=1)
+    assert v.vcon_dict["attachments"][0]["session"] == 1

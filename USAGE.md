@@ -55,8 +55,12 @@ find . -name "*.bak" -delete
    from .vcon_builder import add_lawful_basis
 
    granted_at = datetime.now(timezone.utc).isoformat()
-   add_lawful_basis(v, config.lawful_basis, granted_at=granted_at, party=0, dialog=0)
+   add_lawful_basis(v, config.lawful_basis, granted_at=granted_at, party=0, session=0)
    ```
+
+   The attachment is scoped with `party` plus `session` (core-05). With one
+   Session `session` may be omitted; with several, pass it, or
+   `add_lawful_basis()` raises `ValueError` rather than guess.
 
    If `LAWFUL_BASIS` (or `vcon.lawful_basis.lawful_basis` in YAML) is unset,
    this logs one warning per process and adds nothing — it does not raise
@@ -78,7 +82,7 @@ find . -name "*.bak" -delete
    this on a path that bypasses both delivery classes (e.g. writing
    straight to local storage) will produce a vCon that fails schema
    validation.
-8. `encoding: "json"` bodies (draft-ietf-vcon-vcon-core-04 §2.3.2): `body` is
+8. `encoding: "json"` bodies (draft-ietf-vcon-vcon-core-05, Attachment Content / Analysis Content): `body` is
    the raw JSON value (object/array/number/bool/null), never a
    `json.dumps()`'d string — `add_lawful_basis()` follows this already. Do
    the same for any other JSON-encoded attachment or analysis body you
@@ -93,22 +97,25 @@ find . -name "*.bak" -delete
 
 ## Step 4 — Verify spec compliance
 
-Two test modules enforce spec compliance (draft-ietf-vcon-vcon-core-04).
+Three test modules enforce spec compliance (draft-ietf-vcon-vcon-core-05).
 **Keep them green.**
 
 - `tests/test_vcon_builder.py` — smoke tests for the builder helpers,
-  including `LawfulBasisConfig`, `add_lawful_basis()`, `finalize_vcon()`,
+  including `LawfulBasisConfig`, `add_lawful_basis()`, `describe_session()`, `finalize_vcon()`,
   and `json_body()`.
 - `tests/test_spec_compliance.py` — validates a sample vCon (built with a
   lawful-basis attachment) against the vendored official JSON schema at
   `tests/schema/vcon_json_schema.json` (see `tests/schema/SOURCE.md` for
   where it came from and how to refresh it), plus the non-negotiables the
   schema alone doesn't fully enforce (no `mimetype`, attachments carry
-  `purpose`/`start`/`party`/`dialog`, `body` is a string unless
+  `purpose`/`start`/`party` plus `dialog` or `session`, `body` is a string unless
   `encoding: "json"` — then it must NOT be a string, catching accidental
   double-encoding — no empty `meta`/`metadata`/`group`/`redacted`). Its
   `assert_spec_compliant()` function is written to be copied verbatim into
   another vCon-writing repo's own tests.
+- `tests/test_core05_examples.py` — validates the core-05 Appendix B examples
+  (`tests/schema/examples/`) against the same schema. The CDDL (Appendix D)
+  is vendored alongside as `tests/schema/vcon.cddl`.
 
 ```bash
 uv pip install -e ".[dev]"
@@ -120,3 +127,47 @@ pytest
 1. Push to `github.com/vcon-dev/vcon-<name>-adapter`
 2. Add the repo to the [vcon super repo](https://github.com/vcon-dev/vcon) as a submodule
 3. When ready, publish to PyPI (CI does this on tag push if `PYPI_API_TOKEN` is set)
+
+## Sessions, dialogs and events (core-05)
+
+One Session per conversation. `new_vcon()` creates Session 0; fill it in and
+hang everything else off it:
+
+```python
+from vcon.dialog import Dialog
+from vcon.event import Event
+from vcon.party import Party
+from .vcon_builder import describe_session, new_vcon
+
+v = new_vcon(subject="Support call")
+v.add_party(Party(name="Caller", tel="+15555550100"))  # party 0
+v.add_party(Party(name="Agent", tel="+15555550101"))  # party 1
+
+# Receivers (the endpoints) live on the Session. First receiver is the
+# implied originator; pass originator= only when it is someone else.
+describe_session(v, start="2026-01-02T12:00:00Z", duration=60, receivers=[0, 1])
+
+# Contributors (who spoke or wrote) live on the Dialog. session=0 lists the
+# Dialog index on the Session.
+v.add_dialog(
+    Dialog(type="text", start="2026-01-02T12:00:05Z", parties=[0], body="Hello"), session=0
+)
+
+# Joins, leaves, mutes and transfers are Events, not party_history.
+v.add_event(Event(type="join", time="2026-01-02T12:00:00Z", sessions=0, party=1))
+
+# Attachments need party plus dialog or session.
+v.add_attachment(
+    purpose="call_metadata",
+    body={"queue": "support"},
+    encoding="json",
+    mediatype="application/json",
+    party=0,
+    session=0,
+)
+```
+
+A second related conversation (a transfer target, a callback) is another
+`v.add_session(Session(...))`, linked from the first with a Session_Reference.
+Once a vCon has more than one Session, every attachment must say which one.
+Dialog types written are `recording`, `text` and `incomplete` only.
